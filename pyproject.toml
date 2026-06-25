@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools >= 61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cluster-tunnel"
+version = "0.1.0"
+description = "Authenticated SSH tunnels + session-scoped compute-budget guard for HPC clusters, as a CLI for coding agents."
+authors = [
+    {name = "Jonas Teufel", email = "jonseb1998@gmail.com"},
+]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "rich_click>=1.8.8,<=2.0.0",
+    "pydantic>=2.5.3",
+    "pyyaml>=6.0",
+    "appdirs>=1.0.0,<=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+ctun = "cluster_tunnel.cli:cli"
+
+[tool.setuptools.packages.find]
+include = ["cluster_tunnel", "cluster_tunnel.*"]
+
+[tool.setuptools.package-data]
+"cluster_tunnel" = ["config.example.yaml", "budget_templates/*"]
+"cluster_tunnel.cli" = ["assets/*"]

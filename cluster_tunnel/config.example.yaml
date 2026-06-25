@@ -1,0 +1,44 @@
+# ctun configuration — see DESIGN.md for the full schema.
+# Edited via: ctun config
+
+defaults:
+  control_persist: "12h"           # master lifetime; "yes" = until reboot/logout
+  server_alive_interval: 60        # keepalive seconds, fights idle disconnects
+  terminal: auto                   # login --interactive popup: auto|gnome-terminal|xfce4-terminal|zenity
+
+agent:
+  preamble: |
+    You operate on shared academic HPC clusters via `ctun`. Respect the stated
+    restrictions and read `ctun -t <cluster> info` before submitting jobs.
+
+clusters:
+
+  # A local test "cluster" pointing at this machine's own sshd — handy for trying
+  # ctun end-to-end without a remote node. No budget block => unguarded.
+  localhost:
+    host: localhost
+    description: |
+      Local machine via its own sshd. For testing ctun itself.
+
+  # Example KIT cluster with a session budget guard (uncomment & adjust):
+  # horeka:
+  #   host: horeka.scc.kit.edu
+  #   user: tm4030
+  #   ssh_alias: horeka              # optional: reuse a ~/.ssh/config Host block
+  #   control_persist: "24h"
+  #   description: |
+  #     HoreKa @ KIT (NHR). GPU jobs -> partition 'accelerated'.
+  #   restrictions:                  # advisory only; surfaced via `ctun info`
+  #     max_job_runtime: "48:00:00"
+  #     allowed_partitions: [accelerated, cpuonly]
+  #   budget:                        # omit to run unguarded
+  #     script: budget/horeka.sh     # remote script; prints compute used since session start
+  #     session_limit: 500
+  #     unit: core-hours
+  #     guard_commands: [sbatch, srun, salloc]
+  #     fail_mode: closed
+
+webui:
+  host: 127.0.0.1
+  port: 8765
+  open_browser: true
