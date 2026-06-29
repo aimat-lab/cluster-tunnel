@@ -54,6 +54,21 @@ def test_unknown_cluster(tmp_path: Path, monkeypatch) -> None:
     assert "Unknown cluster" in _norm(r)
 
 
+def test_logout_without_target_clears_all(tmp_path: Path, monkeypatch) -> None:
+    p = tmp_path / "config.yaml"
+    p.write_text(
+        "clusters:\n"
+        "  alpha:\n    host: alpha.example\n"
+        "  beta:\n    host: beta.example\n"
+    )
+    monkeypatch.setenv("CTUN_CONFIG", str(p))
+    r = CliRunner().invoke(cli, ["logout"])
+    assert r.exit_code == 0
+    out = _norm(r)
+    assert "alpha" in out
+    assert "beta" in out
+
+
 def test_webui_placeholder(tmp_path: Path, monkeypatch) -> None:
     _cfg(tmp_path, monkeypatch)
     r = CliRunner().invoke(cli, ["webui"])

@@ -244,17 +244,31 @@ class TunnelCommandsMixin:
     @click.command("logout")
     @click.pass_obj
     def logout_command(self) -> None:
-        """Close the tunnel and clear the session."""
+        """Close the tunnel and clear the session.
+
+        With a target (`-t <cluster>`), logs out that cluster. Without one, logs
+        out every configured cluster.
+        """
         from cluster_tunnel import cmdlog, session, ssh
 
         config = self.load_config()
-        name, _ = self.resolve_cluster(config)
-        spec = ssh.conn_spec(config, name)
-        was_live = ssh.is_live(spec)
-        ssh.close(spec)
-        session.clear(name)
-        cmdlog.clear(name)
-        if was_live:
-            click.echo(f"Tunnel to '{name}' closed; session cleared.")
+        if self.target:
+            self.resolve_cluster(config)  # validate the target
+            names = [self.target]
         else:
-            click.echo(f"No live tunnel for '{name}'; session cleared.")
+            names = sorted(config.clusters)
+
+        if not names:
+            click.echo("No clusters configured. Run `ctun config --init`.")
+            return
+
+        for name in names:
+            spec = ssh.conn_spec(config, name)
+            was_live = ssh.is_live(spec)
+            ssh.close(spec)
+            session.clear(name)
+            cmdlog.clear(name)
+            if was_live:
+                click.echo(f"Tunnel to '{name}' closed; session cleared.")
+            else:
+                click.echo(f"No live tunnel for '{name}'; session cleared.")

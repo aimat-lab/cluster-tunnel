@@ -137,14 +137,23 @@ def budget_script_path(config_path: Path, name: str, script: str | None) -> Path
 
 
 def setup_if_necessary(cli_path: str | None = None) -> Path:
-    """Create the config file (+ budget dir + example script) if it's missing."""
+    """Create the config file (+ budget dir + bundled budget scripts) if missing.
+
+    Every ``*.sh`` template shipped in ``budget_templates/`` is copied into the
+    user's ``budget/`` directory under its own name, so a cluster whose config
+    references ``budget/<cluster>.sh`` works out of the box (e.g. the validated
+    ``haicore.sh``). Existing files are never overwritten.
+    """
     path = resolve_config_path(cli_path)
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(PACKAGE_DIR / "config.example.yaml", path)
         bdir = path.parent / "budget"
         bdir.mkdir(parents=True, exist_ok=True)
-        template = PACKAGE_DIR / "budget_templates" / "horeka.sh"
-        if template.exists():
-            shutil.copy(template, bdir / "horeka.sh.example")
+        templates = PACKAGE_DIR / "budget_templates"
+        if templates.is_dir():
+            for tpl in sorted(templates.glob("*.sh")):
+                dest = bdir / tpl.name
+                if not dest.exists():
+                    shutil.copy(tpl, dest)
     return path

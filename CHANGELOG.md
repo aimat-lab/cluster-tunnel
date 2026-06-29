@@ -40,6 +40,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `logout` without a target now logs out **every configured cluster** (closing
+  each tunnel and clearing its session + command log); pass `-t <cluster>` to
+  log out just one.
+- `config --init` now copies **all** bundled budget scripts from
+  `budget_templates/` into the user's `budget/` directory under their real names
+  (e.g. `budget/haicore.sh`), so a cluster referencing `budget/<cluster>.sh`
+  works out of the box. Existing files are never overwritten. (Previously it
+  copied only `horeka.sh.example`.)
 - The default budget metric is now **job-hours** (Slurm job wall-clock time since
   the session started, clamped to the session window; concurrent jobs add up),
   computed from `sacct` and working on any cluster with Slurm accounting. The
