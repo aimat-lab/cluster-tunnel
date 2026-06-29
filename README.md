@@ -162,14 +162,14 @@ Global options:
 ### `login` — authenticate and open the tunnel
 
 ```console
-$ ctun -t horeka login [--interactive] [--limit N] [--timeout S]
+$ ctun -t horeka login [-i|--interactive] [-l|--limit N] [--timeout S]
 ```
 
 - Opens the persistent master connection; prompts for your password + OTP.
-- `--limit N` sets this session's compute budget (overrides the cluster's configured
+- `-l, --limit N` sets this session's compute budget (overrides the cluster's configured
   `session_limit`).
-- `--interactive` shows a small pop-up window (password + limit) instead of prompting in
-  the terminal, then feeds the password to ssh for you. Useful when `ctun` is invoked by
+- `-i, --interactive` shows a small pop-up window (password + limit) instead of prompting
+  in the terminal, then feeds the password to ssh for you. Useful when `ctun` is invoked by
   a tool that has no terminal of its own (e.g. a coding agent) — a person at the machine
   fills in the window. `--timeout S` bounds how long it waits (default 120s).
 
@@ -179,7 +179,7 @@ tunnel drops) starts a fresh session and resets the budget window.
 ### `run` — run a command through the tunnel
 
 ```console
-$ ctun -t horeka run [--tty] [--dry-run] -- <command> [args…]
+$ ctun -t horeka run [--tty] [-n|--dry-run] -- <command> [args…]
 ```
 
 - Everything after `--` is forwarded to the cluster exactly as written, so flags like
@@ -187,7 +187,7 @@ $ ctun -t horeka run [--tty] [--dry-run] -- <command> [args…]
 - The command's **exit code is propagated** as `ctun`'s exit code, and output is streamed
   live.
 - `--tty` allocates a pseudo-terminal for interactive remote programs.
-- `--dry-run` reports the budget decision without executing.
+- `-n, --dry-run` reports the budget decision without executing.
 - If there is no live tunnel, `run` **fails immediately** with a message telling you to
   `login` — it never silently prompts for a password.
 
@@ -199,9 +199,9 @@ $ ctun -t horeka run -- bash -c 'cd $WORK && sbatch job.sh'
 ### `status` — tunnel and session state
 
 ```console
-$ ctun -t horeka status          # one cluster (detailed)
-$ ctun status                    # all configured clusters
-$ ctun -t horeka status --json   # machine-readable
+$ ctun -t horeka status              # one cluster (detailed)
+$ ctun status                        # all configured clusters
+$ ctun -t horeka status -j|--json    # machine-readable
 ```
 
 Shows whether the tunnel is live, when the session started, and the budget limit.
@@ -209,7 +209,7 @@ Shows whether the tunnel is live, when the session started, and the budget limit
 ### `info` — briefing for a cluster
 
 ```console
-$ ctun -t horeka info [--json]
+$ ctun -t horeka info [-j|--json]
 ```
 
 Prints the cluster's description, its (advisory) restrictions, and the current budget
@@ -226,11 +226,11 @@ Tears down the master connection and clears the session record.
 ### `config` — manage the config file
 
 ```console
-$ ctun config              # open in $EDITOR
-$ ctun config --init       # create a starter config if none exists
-$ ctun config --path       # print the config file path
-$ ctun config --show       # print the resolved config
-$ ctun config --validate   # check the config for errors
+$ ctun config                  # open in $EDITOR
+$ ctun config -i|--init        # create a starter config if none exists
+$ ctun config -p|--path        # print the config file path
+$ ctun config -s|--show        # print the resolved config
+$ ctun config --validate       # check the config for errors
 ```
 
 ### `webui`

@@ -10,7 +10,7 @@ class ContextCommandsMixin:
 
     @click.command("info")
     @click.pass_obj
-    @click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON output.")
+    @click.option("-j", "--json", "as_json", is_flag=True, help="Machine-readable JSON output.")
     def info_command(self, as_json: bool) -> None:
         """Print the agent briefing: description, restrictions, and budget."""
         from cluster_tunnel import budget as budget_mod

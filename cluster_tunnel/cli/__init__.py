@@ -31,9 +31,7 @@ class CLI(
     COMMAND_GROUPS = [
         {"name": "Tunnel", "commands": ["login", "status", "logout"]},
         {"name": "Execution", "commands": ["run"]},
-        {"name": "Context", "commands": ["info"]},
-        {"name": "Configuration", "commands": ["config"]},
-        {"name": "Interface", "commands": ["webui"]},
+        {"name": "Miscellaneous", "commands": ["info", "config", "webui"]},
     ]
 
     def __init__(self, *args, **kwargs):

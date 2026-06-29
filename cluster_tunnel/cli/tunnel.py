@@ -10,11 +10,29 @@ class TunnelCommandsMixin:
 
     @click.command("login")
     @click.pass_obj
-    @click.option("--interactive", is_flag=True, help="Pop up a window for a present human to enter the OTP.")
-    @click.option("--limit", type=float, default=None, help="Session compute budget (overrides config session_limit).")
+    @click.option("-i", "--interactive", is_flag=True, help="Pop up a window for a present human to enter the OTP.")
+    @click.option("-l", "--limit", type=float, default=None, help="Session compute budget (overrides config session_limit).")
     @click.option("--timeout", type=int, default=120, help="Seconds to wait for an interactive login to complete.")
     def login_command(self, interactive: bool, limit: float | None, timeout: int) -> None:
-        """Authenticate (enter OTP) and open the persistent tunnel."""
+        """Authenticate once and open the persistent background tunnel.
+
+        This is the only step that needs your password and one-time password
+        (OTP). `login` opens a single long-lived SSH *master* connection
+        (OpenSSH ControlMaster) and leaves its control socket running in the
+        background. Every later `ctun -t <cluster> run -- ...` opens a
+        lightweight channel inside that already-authenticated connection, so no
+        password or OTP is needed again for the life of the tunnel.
+
+        The tunnel stays up for `control_persist` (configurable; 12h by default)
+        or until the network drops or you `logout`. Logging in also starts a
+        fresh budget *session*: the compute-budget guard measures usage from
+        this moment onward, and the limit comes from `-l/--limit`, falling back
+        to the cluster's configured `session_limit`.
+
+        Use `-i/--interactive` when ctun is driven by a tool with no terminal of
+        its own (e.g. a coding agent): a small pop-up lets a present human type
+        the password, which is fed to ssh — the agent never sees the secret.
+        """
         from cluster_tunnel import session, ssh
 
         config = self.load_config()
@@ -69,7 +87,7 @@ class TunnelCommandsMixin:
 
     @click.command("status")
     @click.pass_obj
-    @click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON output.")
+    @click.option("-j", "--json", "as_json", is_flag=True, help="Machine-readable JSON output.")
     def status_command(self, as_json: bool) -> None:
         """Show tunnel + session status (all clusters, or one with -t)."""
         from datetime import datetime

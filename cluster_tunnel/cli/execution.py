@@ -11,7 +11,7 @@ class ExecutionCommandsMixin:
     @click.command("run", context_settings={"ignore_unknown_options": True})
     @click.pass_obj
     @click.option("--tty", is_flag=True, help="Allocate a pseudo-TTY (for interactive remote programs).")
-    @click.option("--dry-run", is_flag=True, help="Run the budget pre-flight check only; don't execute.")
+    @click.option("-n", "--dry-run", is_flag=True, help="Run the budget pre-flight check only; don't execute.")
     @click.argument("command", nargs=-1, type=click.UNPROCESSED)
     def run_command(self, tty: bool, dry_run: bool, command: tuple[str, ...]) -> None:
         """Run a command on the cluster: ctun -t <cluster> run -- <cmd...>."""
