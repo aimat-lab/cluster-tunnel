@@ -13,8 +13,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `-l/--limit`; `status` and `info` `-j/--json`; `run -n/--dry-run`;
   `config -i/--init`, `-p/--path`, `-s/--show`; `webui -p/--port` and
   `-n/--no-browser`.
+- Single source of truth for the package version: a `cluster_tunnel/VERSION`
+  file read at runtime via `constants.get_version()`, plus a
+  `[tool.bumpversion]` (bump-my-version) workflow that keeps `pyproject.toml`
+  and `VERSION` in sync — `uv run bump-my-version bump <patch|minor|major>`.
+  `bump-my-version` is declared in the `dev` extra.
 
 ### Changed
+
+- `--version` and `cluster_tunnel.__version__` are now sourced from the
+  `VERSION` file (previously the installed-package metadata and a hardcoded
+  literal), so they can no longer drift from the packaged version.
 
 - Grouped `info`, `config`, and `webui` under a single **Miscellaneous** panel in
   the main `--help` output (previously three separate Context/Configuration/Interface

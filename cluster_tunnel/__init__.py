@@ -1,3 +1,7 @@
 """cluster-tunnel (ctun) — authenticated SSH tunnels + budget guard for HPC clusters."""
 
-__version__ = "0.1.0"
+from cluster_tunnel.constants import get_version
+
+#: Read from the bundled VERSION file so it can never drift from the packaged
+#: version. Bump both at once with `bump-my-version bump <part>`.
+__version__ = get_version()

@@ -21,6 +21,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "bump-my-version>=0.28.0",
 ]
 
 [project.scripts]
@@ -30,5 +31,29 @@ ctun = "cluster_tunnel.cli:cli"
 include = ["cluster_tunnel", "cluster_tunnel.*"]
 
 [tool.setuptools.package-data]
-"cluster_tunnel" = ["config.example.yaml", "budget_templates/*"]
+"cluster_tunnel" = ["config.example.yaml", "budget_templates/*", "VERSION"]
 "cluster_tunnel.cli" = ["assets/*"]
+
+# Version bumping — keeps pyproject.toml and cluster_tunnel/VERSION in sync.
+# Run e.g. `uv run bump-my-version bump patch` (or minor/major).
+# Deliberately scoped: CHANGELOG.md (historical [0.1.0] entry) and tests are
+# NOT listed, so a bump can't rewrite them.
+[tool.bumpversion]
+current_version = "0.1.0"
+parse = "(?<![=<>])(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)"
+serialize = ["{major}.{minor}.{patch}"]
+search = "{current_version}"
+replace = "{new_version}"
+regex = true
+ignore_missing_version = true
+tag = false
+sign_tags = false
+tag_name = "v{new_version}"
+tag_message = "Bump version: {current_version} → {new_version}"
+allow_dirty = true
+commit = false
+message = "Bump version: {current_version} → {new_version}"
+files = [
+    {filename = "pyproject.toml", search = "version = \"{current_version}\"", replace = "version = \"{new_version}\""},
+    {filename = "cluster_tunnel/VERSION"},
+]

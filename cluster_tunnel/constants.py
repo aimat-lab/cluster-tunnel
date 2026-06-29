@@ -2,6 +2,18 @@
 
 from __future__ import annotations
 
+import pathlib
+
+#: Absolute path to the bundled VERSION file — the single source of truth for
+#: the package version (kept in sync with pyproject.toml by `bump-my-version`).
+VERSION_PATH = pathlib.Path(__file__).parent / "VERSION"
+
+
+def get_version() -> str:
+    """Return the package version, read from the bundled ``VERSION`` file."""
+    return VERSION_PATH.read_text().strip()
+
+
 #: appdirs identifiers for ~/.config/cluster-tunnel and ~/.cache/cluster-tunnel.
 APP_NAME = "cluster-tunnel"
 APP_AUTHOR = "jonas"

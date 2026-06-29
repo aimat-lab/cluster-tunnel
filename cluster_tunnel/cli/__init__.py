@@ -10,6 +10,7 @@ import logging
 
 import rich_click as click
 
+from cluster_tunnel.constants import get_version
 from cluster_tunnel.cli.base import BaseCLI
 from cluster_tunnel.cli.configcmd import ConfigCommandsMixin
 from cluster_tunnel.cli.context import ContextCommandsMixin
@@ -49,7 +50,7 @@ def create_cli():
     """Create and return the root CLI group."""
 
     @click.group(cls=CLI, context_settings={"show_default": True})
-    @click.version_option(package_name="cluster-tunnel")
+    @click.version_option(version=get_version(), prog_name="ctun")
     @click.option("-t", "--target", default=None, help="Cluster to act on (from config).")
     @click.option(
         "-c", "--config", "config_path", default=None, type=click.Path(),
