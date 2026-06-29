@@ -246,7 +246,7 @@ agent:
 clusters:
   horeka:
     host: horeka.scc.kit.edu        # the cluster login URL
-    user: tm4030
+    user: ab1234
     ssh_alias: horeka               # optional: reuse a ~/.ssh/config Host block instead
     identity_file: ~/.ssh/horeka    # optional
     control_persist: "24h"          # optional per-cluster override
@@ -267,7 +267,7 @@ clusters:
       fail_mode: closed             # closed = block on probe error (default) | open
 
   bwuni:
-    ssh_alias: bwuni                # already in ~/.ssh/config (uc2.scc.kit.edu, user tm4030)
+    ssh_alias: bwuni                # already in ~/.ssh/config (uc2.scc.kit.edu, user ab1234)
     description: "bwUniCluster 2.0 @ KIT. GPU partitions gpu_h100 / gpu_a100."
     # no budget block -> no core-hour budget; tunnel+run unguarded
 

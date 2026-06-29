@@ -142,7 +142,7 @@ A cluster entry looks like:
 clusters:
   haicore:
     host: haicore.scc.kit.edu
-    user: tm4030
+    user: ab1234
     requires_otp: true
     description: |
       HAICORE @ KIT. GPU jobs via Slurm.

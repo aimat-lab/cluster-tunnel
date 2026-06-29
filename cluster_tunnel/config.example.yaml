@@ -16,7 +16,7 @@ clusters:
   # Example KIT cluster with a session budget guard (uncomment & adjust):
   # horeka:
   #   host: horeka.scc.kit.edu
-  #   user: tm4030
+  #   user: ab1234
   #   ssh_alias: horeka              # optional: reuse a ~/.ssh/config Host block
   #   requires_otp: true             # advisory: surfaced via `ctun info`
   #   control_persist: "24h"
@@ -37,7 +37,7 @@ clusters:
   # time the user has run since the session started (concurrent jobs add up).
   # haicore:
   #   host: haicore.scc.kit.edu
-  #   user: tm4030
+  #   user: ab1234
   #   requires_otp: true
   #   budget:                        # omit / leave session_limit unset to run unguarded
   #     script: budget/haicore.sh    # bundled; job wall-clock hours since session start

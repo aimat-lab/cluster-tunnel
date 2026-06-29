@@ -157,7 +157,7 @@ briefing. See [DESIGN.md §6](./DESIGN.md) for the full annotated schema.
   `zenity` available → blocking popup login is feasible.
 - `uv` 0.10.4, Python 3.12; OpenSSH 9.6 (full ControlMaster support).
 - Existing `~/.ssh/config` aliases: `bwuni` → `uc2.scc.kit.edu`, `haicore` →
-  `haicore.scc.kit.edu` (KIT account `tm4030`).
+  `haicore.scc.kit.edu` (KIT account `ab1234`).
 - AutoSlurm configs (`/media/ssd2/Programming/AutoSlurm/auto_slurm/configs/`) provide
   partitions/accounts per cluster (e.g. JUWELS account `aimatchem`, HoreKa partition
   `accelerated`).

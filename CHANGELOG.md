@@ -74,6 +74,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Expanded the `login` help text with background on the persistent OpenSSH
   ControlMaster tunnel and the session-scoped compute-budget guard.
 - Updated the README command synopses to reflect the new short option flags.
+- The main `--help` banner is now a two-part logo lockup: an ANSI-art image
+  (`logo_image.txt`) beside the text wordmark (`logo_text.txt`), replacing the
+  single `logo.txt`. The image is rendered with its own ANSI colours (literal
+  `\e`/`\033` escape sequences are normalised to real escapes) and the wordmark
+  is colourised by region.
+- The main `--help` description now summarises what `ctun` does — an
+  authenticate-once persistent tunnel for you and your coding agents, plus the
+  session-scoped compute-budget guard — and ends with a numbered **Getting
+  started** walkthrough (`config --init` → `config` → `login` → `run`).
+- The example config and docs now use a generic placeholder cluster username
+  (`ab1234`) instead of a real account.
 
 ## [0.1.0] - 2026-06-25
 
