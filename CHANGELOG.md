@@ -85,6 +85,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   started** walkthrough (`config --init` → `config` → `login` → `run`).
 - The example config and docs now use a generic placeholder cluster username
   (`ab1234`) instead of a real account.
+- The interactive login pop-up (`login --interactive`) now omits the OTP field
+  for clusters configured with `requires_otp: false`, asking only for the
+  password and session limit.
 
 ## [0.1.0] - 2026-06-25
 

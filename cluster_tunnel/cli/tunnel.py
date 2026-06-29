@@ -67,7 +67,9 @@ class TunnelCommandsMixin:
                 raise click.ClickException(
                     f"No display for the login dialog; run `ctun -t {name} login` from a terminal."
                 )
-            creds = popup.prompt_credentials(name, spec.target, default_limit, unit)
+            creds = popup.prompt_credentials(
+                name, spec.target, default_limit, unit, cluster.requires_otp
+            )
             if creds is None:
                 raise click.ClickException("Login cancelled.")
             if not popup.login_with_password(spec, creds.password, creds.otp, timeout, verbose):

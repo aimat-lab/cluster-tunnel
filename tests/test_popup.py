@@ -36,6 +36,23 @@ def test_prompt_parses_without_otp(monkeypatch) -> None:
     assert creds.otp is None
 
 
+def test_prompt_forwards_requires_otp_flag(monkeypatch) -> None:
+    captured: dict = {}
+
+    def fake_run(args, **k):
+        captured["args"] = args
+        return subprocess.CompletedProcess(args, 0, '{"password":"p","limit":1.0}', "")
+
+    monkeypatch.setattr(popup, "_dialog_python", lambda: "/usr/bin/python3")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    popup.prompt_credentials("k", "u@h", None, "units", requires_otp=False)
+    assert captured["args"][-1] == "0"
+
+    popup.prompt_credentials("k", "u@h", None, "units", requires_otp=True)
+    assert captured["args"][-1] == "1"
+
+
 def test_classify_prompt() -> None:
     assert popup._classify_prompt(b"user@host's password: ") == "password"
     assert popup._classify_prompt(b"Enter passphrase for key: ") == "password"

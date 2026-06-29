@@ -62,6 +62,7 @@ cluster = sys.argv[1] if len(sys.argv) > 1 else "cluster"
 target = sys.argv[2] if len(sys.argv) > 2 else ""
 default_limit = sys.argv[3] if len(sys.argv) > 3 else ""
 unit = sys.argv[4] if len(sys.argv) > 4 else ""
+requires_otp = (sys.argv[5] != "0") if len(sys.argv) > 5 else True
 
 state = {"creds": None}
 root = tk.Tk()
@@ -77,22 +78,30 @@ tk.Label(frm, text="Authenticate to " + cluster, font=("", 11, "bold")).grid(
     row=0, column=0, columnspan=2, sticky="w")
 tk.Label(frm, text=target, fg="#666").grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 10))
 
-tk.Label(frm, text="Password:").grid(row=2, column=0, sticky="e", padx=(0, 8), pady=4)
+row = 2
+tk.Label(frm, text="Password:").grid(row=row, column=0, sticky="e", padx=(0, 8), pady=4)
 pw = tk.StringVar()
 e1 = tk.Entry(frm, show="*", textvariable=pw, width=30)
-e1.grid(row=2, column=1, sticky="we", pady=4)
+e1.grid(row=row, column=1, sticky="we", pady=4)
+row += 1
 
-tk.Label(frm, text="OTP / passcode:").grid(row=3, column=0, sticky="e", padx=(0, 8), pady=4)
+# The OTP field is shown only when the cluster requires a one-time passcode;
+# otherwise `otp` stays empty and no OTP prompt is answered during login.
 otp = tk.StringVar()
-e2 = tk.Entry(frm, show="*", textvariable=otp, width=30)
-e2.grid(row=3, column=1, sticky="we", pady=4)
+if requires_otp:
+    tk.Label(frm, text="OTP / passcode:").grid(row=row, column=0, sticky="e", padx=(0, 8), pady=4)
+    e2 = tk.Entry(frm, show="*", textvariable=otp, width=30)
+    e2.grid(row=row, column=1, sticky="we", pady=4)
+    row += 1
 
 limit_label = "Session limit" + (" (" + unit + ")" if unit else "") + ":"
-tk.Label(frm, text=limit_label).grid(row=4, column=0, sticky="e", padx=(0, 8), pady=4)
+tk.Label(frm, text=limit_label).grid(row=row, column=0, sticky="e", padx=(0, 8), pady=4)
 lim = tk.StringVar(value=default_limit)
-tk.Entry(frm, textvariable=lim, width=30).grid(row=4, column=1, sticky="we", pady=4)
+tk.Entry(frm, textvariable=lim, width=30).grid(row=row, column=1, sticky="we", pady=4)
+row += 1
 err = tk.StringVar()
-tk.Label(frm, textvariable=err, fg="red").grid(row=5, column=0, columnspan=2, sticky="w")
+tk.Label(frm, textvariable=err, fg="red").grid(row=row, column=0, columnspan=2, sticky="w")
+row += 1
 
 def submit(event=None):
     if not pw.get():
@@ -114,7 +123,7 @@ def cancel(event=None):
     root.quit()
 
 btns = tk.Frame(frm)
-btns.grid(row=6, column=0, columnspan=2, pady=(10, 0), sticky="e")
+btns.grid(row=row, column=0, columnspan=2, pady=(10, 0), sticky="e")
 tk.Button(btns, text="Cancel", command=cancel).pack(side="right", padx=(6, 0))
 login_btn = tk.Button(
     btns, text="Login", command=submit, default="active",
@@ -181,12 +190,17 @@ def gui_available() -> bool:
 
 
 def prompt_credentials(
-    cluster_name: str, target: str, default_limit: Optional[float], unit: str = "units"
+    cluster_name: str,
+    target: str,
+    default_limit: Optional[float],
+    unit: str = "units",
+    requires_otp: bool = True,
 ) -> Optional[Credentials]:
     """Show the blocking tkinter dialog; return Credentials, or None if cancelled.
 
     ``unit`` is shown in brackets after the session-limit label (e.g. "Session
-    limit (jobh):").
+    limit (jobh):"). When ``requires_otp`` is false the dialog omits the OTP
+    field entirely, so only the password and session limit are asked for.
     """
     py = _dialog_python()
     if py is None:
@@ -199,6 +213,7 @@ def prompt_credentials(
         target,
         "" if default_limit is None else str(default_limit),
         unit or "",
+        "1" if requires_otp else "0",
     ]
     res = subprocess.run(args, capture_output=True, text=True)
     if res.returncode != 0 or not res.stdout.strip():
