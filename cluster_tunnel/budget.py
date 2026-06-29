@@ -8,6 +8,7 @@ session limit, and hard-block if at/over. Threshold only — no per-job forecast
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -27,14 +28,47 @@ class Decision:
     unit: str = "units"
 
 
+_ENV_ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*")
+
+
+def first_command_token(tokens: list[str]) -> str:
+    """The first real command token, skipping leading ``VAR=value`` env assignments.
+
+    ``ctun run -- FOO=1 sbatch job.sh`` should still be recognised as an ``sbatch``
+    submission, so leading shell-style environment assignments are ignored.
+    """
+    for tok in tokens:
+        if _ENV_ASSIGN.fullmatch(tok):
+            continue
+        return tok
+    return ""
+
+
 def first_token_name(tokens: list[str]) -> str:
-    """The bare command name of the first token (basename, no path)."""
-    return os.path.basename(tokens[0]) if tokens else ""
+    """The bare command name of the first real token (basename, no path)."""
+    return os.path.basename(first_command_token(tokens))
 
 
 def is_guarded(tokens: list[str], guard_commands: list[str]) -> bool:
-    """True if the command is a job submission subject to the budget guard."""
-    return first_token_name(tokens) in set(guard_commands)
+    """True if the command is a job submission subject to the budget guard.
+
+    Each entry in ``guard_commands`` is treated as a **regex** matched (fullmatch)
+    against the command's bare name, so robust patterns like ``aslurmx?`` or
+    ``s(batch|run|alloc)`` work. An entry that isn't valid regex falls back to a
+    literal comparison, so plain names like ``sbatch`` keep working. Matching is
+    case-insensitive and ignores any path prefix or leading env assignments.
+    """
+    name = first_token_name(tokens)
+    if not name:
+        return False
+    for pattern in guard_commands:
+        try:
+            if re.fullmatch(pattern, name, re.IGNORECASE):
+                return True
+        except re.error:
+            if pattern == name:  # invalid regex -> literal match
+                return True
+    return False
 
 
 def remote_user(spec: ConnSpec, cluster: Cluster) -> str:
@@ -85,7 +119,8 @@ def decide(
 
     if sess is None:
         return _failure(cluster, "no active session", limit, unit)
-    if limit is None:
+    # A null or negative limit (e.g. -1) means "infinite" — no budget guard.
+    if limit is None or limit < 0:
         return Decision(True, "no session limit set", unit=unit)
 
     script = config_mod.budget_script_path(config_path, name, budget.script)

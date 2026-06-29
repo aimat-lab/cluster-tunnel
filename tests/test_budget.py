@@ -45,6 +45,22 @@ def test_first_token_and_guarded() -> None:
     assert budget.is_guarded([], ["sbatch"]) is False
 
 
+def test_is_guarded_robust() -> None:
+    cmds = ["sbatch", "srun", "salloc", "aslurm", "aslurmx"]
+    # path prefix + leading env assignments are ignored
+    assert budget.is_guarded(["/opt/slurm/bin/sbatch", "j.sh"], cmds) is True
+    assert budget.is_guarded(["FOO=1", "BAR=2", "aslurm", "x"], cmds) is True
+    # both aslurm and aslurmx match; case-insensitive
+    assert budget.is_guarded(["aslurmx"], cmds) is True
+    assert budget.is_guarded(["ASLURM"], cmds) is True
+    # a regex pattern entry works
+    assert budget.is_guarded(["aslurm"], ["aslurmx?"]) is True
+    assert budget.is_guarded(["aslurmx"], ["aslurmx?"]) is True
+    # non-submission stays unguarded; no accidental substring match
+    assert budget.is_guarded(["squeue"], cmds) is False
+    assert budget.is_guarded(["sbatch_helper"], cmds) is False
+
+
 def test_not_guarded(tmp_path: Path) -> None:
     c, p = _config_with_budget(tmp_path, script=_dummy_script(tmp_path))
     d = budget.decide(c, "k", _spec(), ["squeue", "--me"], p)
@@ -68,6 +84,15 @@ def test_under_budget(tmp_path: Path, monkeypatch) -> None:
 def test_no_limit_allowed(tmp_path: Path, monkeypatch) -> None:
     c, p = _config_with_budget(tmp_path, script=_dummy_script(tmp_path))
     _patch(monkeypatch, sess={"start_epoch": 0, "limit": None, "unit": "core-hours"})
+    d = budget.decide(c, "k", _spec(), ["sbatch", "j"], p)
+    assert d.allowed and "no session limit" in d.reason
+
+
+def test_negative_limit_means_infinite(tmp_path: Path, monkeypatch) -> None:
+    # A stored limit of -1 means "infinite" — submissions are always allowed,
+    # and the budget script is never even probed.
+    c, p = _config_with_budget(tmp_path, script=_dummy_script(tmp_path))
+    _patch(monkeypatch, sess={"start_epoch": 0, "limit": -1.0, "unit": "core-hours"})
     d = budget.decide(c, "k", _spec(), ["sbatch", "j"], p)
     assert d.allowed and "no session limit" in d.reason
 

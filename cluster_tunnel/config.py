@@ -56,6 +56,7 @@ class Cluster(BaseModel):
     user: Optional[str] = None
     ssh_alias: Optional[str] = None
     identity_file: Optional[str] = None
+    requires_otp: bool = False
     control_persist: Optional[str] = None
     server_alive_interval: Optional[int] = None
     server_alive_count_max: Optional[int] = None

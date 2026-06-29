@@ -13,12 +13,36 @@ def test_prompt_parses(monkeypatch) -> None:
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda args, **k: subprocess.CompletedProcess(args, 0, '{"password":"s3cret","limit":250.0}', ""),
+        lambda args, **k: subprocess.CompletedProcess(
+            args, 0, '{"password":"s3cret","otp":"123456","limit":250.0}', ""
+        ),
     )
     creds = popup.prompt_credentials("k", "u@h", 100.0)
     assert isinstance(creds, Credentials)
     assert creds.password == "s3cret"
+    assert creds.otp == "123456"
     assert creds.limit == 250.0
+
+
+def test_prompt_parses_without_otp(monkeypatch) -> None:
+    monkeypatch.setattr(popup, "_dialog_python", lambda: "/usr/bin/python3")
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda args, **k: subprocess.CompletedProcess(args, 0, '{"password":"s3cret","limit":1.0}', ""),
+    )
+    creds = popup.prompt_credentials("k", "u@h", None)
+    assert creds.password == "s3cret"
+    assert creds.otp is None
+
+
+def test_classify_prompt() -> None:
+    assert popup._classify_prompt(b"user@host's password: ") == "password"
+    assert popup._classify_prompt(b"Enter passphrase for key: ") == "password"
+    assert popup._classify_prompt(b"Verification code: ") == "otp"
+    assert popup._classify_prompt(b"OTP: ") == "otp"
+    assert popup._classify_prompt(b"(MFA) Enter your passcode: ") == "otp"
+    assert popup._classify_prompt(b"Last login: yesterday") is None
 
 
 def test_prompt_cancel(monkeypatch) -> None:

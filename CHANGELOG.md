@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `cluster-tunnel` agent **skill** under `skill/` — a Claude Code / Agent-Skills
+  skill that teaches a coding agent to drive clusters through `ctun`: the
+  startup workflow (status → info → interactive login → run), the per-session
+  budget guard, and HPC etiquette (never compute on login nodes; always use
+  Slurm). Includes `SKILL.md`, a full CLI `reference.md`, `cluster-etiquette.md`,
+  and install instructions.
+- `logs` command: print the timestamped commands sent to a cluster this session
+  (requires `-t`; `-j/--json` for machine-readable output). Only the commands
+  are recorded — never their output.
+- Temporary per-cluster **command log** in the cache (`cmdlog`): records the
+  commands sent over the tunnel (commands only), surfaced by `status` and
+  `logs`, and cleared on `logout` and on a fresh `login`.
+- `status` now shows, per cluster, the number of commands sent and the time of
+  the last command, plus — for an explicitly targeted, live, guarded cluster
+  only — the live **budget used** (with a safeguard message if the probe fails).
+- `info` now reports connection details (host, ssh alias, user, whether **OTP**
+  is required) and, when a budget is configured, the guard commands, probe
+  fail-mode, and the path of the budget script.
+- `requires_otp` per-cluster config field (advisory; shown by `info`).
 - Single-letter aliases for subcommand options: `login -i/--interactive` and
   `-l/--limit`; `status` and `info` `-j/--json`; `run -n/--dry-run`;
   `config -i/--init`, `-p/--path`, `-s/--show`; `webui -p/--port` and
@@ -21,6 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `info` now renders each cluster as a Rich panel (description, connection,
+  restrictions, budget) and, when no `-t` target is given, prints a panel for
+  every configured cluster instead of requiring a target.
+- `status` now stretches to the full terminal width.
+- `login` and `logout` print nicer, clearer success/failure output (`login`
+  success is a Rich panel showing the target and the session budget).
 - `--version` and `cluster_tunnel.__version__` are now sourced from the
   `VERSION` file (previously the installed-package metadata and a hardcoded
   literal), so they can no longer drift from the packaged version.

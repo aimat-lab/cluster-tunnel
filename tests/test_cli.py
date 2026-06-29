@@ -40,11 +40,11 @@ def test_run_requires_command(tmp_path: Path, monkeypatch) -> None:
     assert "Provide a command" in _norm(r)
 
 
-def test_info_requires_target(tmp_path: Path, monkeypatch) -> None:
+def test_info_without_target_lists_all(tmp_path: Path, monkeypatch) -> None:
     _cfg(tmp_path, monkeypatch)
     r = CliRunner().invoke(cli, ["info"])
-    assert r.exit_code != 0
-    assert "No cluster selected" in _norm(r)
+    assert r.exit_code == 0
+    assert "localhost" in _norm(r)
 
 
 def test_unknown_cluster(tmp_path: Path, monkeypatch) -> None:

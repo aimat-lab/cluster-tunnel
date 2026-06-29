@@ -32,7 +32,7 @@ class CLI(
     COMMAND_GROUPS = [
         {"name": "Tunnel", "commands": ["login", "status", "logout"]},
         {"name": "Execution", "commands": ["run"]},
-        {"name": "Miscellaneous", "commands": ["info", "config", "webui"]},
+        {"name": "Miscellaneous", "commands": ["info", "logs", "config", "webui"]},
     ]
 
     def __init__(self, *args, **kwargs):
@@ -42,6 +42,7 @@ class CLI(
         self.add_command(self.logout_command)
         self.add_command(self.run_command)
         self.add_command(self.info_command)
+        self.add_command(self.logs_command)
         self.add_command(self.config_command)
         self.add_command(self.webui_command)
 

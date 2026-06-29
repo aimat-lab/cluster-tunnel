@@ -25,6 +25,7 @@ clusters:
   #   host: horeka.scc.kit.edu
   #   user: tm4030
   #   ssh_alias: horeka              # optional: reuse a ~/.ssh/config Host block
+  #   requires_otp: true             # advisory: surfaced via `ctun info`
   #   control_persist: "24h"
   #   description: |
   #     HoreKa @ KIT (NHR). GPU jobs -> partition 'accelerated'.

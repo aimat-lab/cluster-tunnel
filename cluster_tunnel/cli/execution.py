@@ -5,6 +5,11 @@ from __future__ import annotations
 import rich_click as click
 
 
+def _num(x: float) -> str:
+    """Format a budget figure compactly (1 decimal, no trailing .0)."""
+    return f"{round(x, 1):g}"
+
+
 class ExecutionCommandsMixin:
     """Mixin providing the `run` command."""
 
@@ -18,6 +23,7 @@ class ExecutionCommandsMixin:
         import shlex
 
         from cluster_tunnel import budget as budget_mod
+        from cluster_tunnel import cmdlog
         from cluster_tunnel import config as config_mod
         from cluster_tunnel import ssh
 
@@ -47,8 +53,35 @@ class ExecutionCommandsMixin:
             return
 
         if not decision.allowed:
+            # Budget exhausted (probe returned a number at/over the limit) gets a
+            # specific, actionable message; other blocks (e.g. probe fail-closed)
+            # fall back to the reason text.
+            if decision.used is not None and decision.limit is not None:
+                over = decision.used - decision.limit
+                raise click.ClickException(
+                    f"Submission blocked on '{name}': compute budget exhausted.\n"
+                    f"  used {_num(decision.used)} / {_num(decision.limit)} {decision.unit} "
+                    f"(over by {_num(over)} {decision.unit})\n"
+                    f"  '{shlex.join(tokens)}' was NOT submitted.\n"
+                    f"  Free budget by cancelling queued jobs, or start a fresh "
+                    f"session with `ctun -t {name} login`."
+                )
             raise click.ClickException(
-                f"BLOCKED on {name}: {decision.reason}. Command not submitted."
+                f"Submission blocked on '{name}': {decision.reason}. Command not submitted."
             )
 
+        # When a probe actually ran (guarded command + a limit), show remaining
+        # budget in gray before the command's own output. Goes to stderr so it
+        # never mixes into the command's stdout.
+        if decision.used is not None and decision.limit is not None:
+            remaining = decision.limit - decision.used
+            click.secho(
+                f"budget: {_num(decision.used)} / {_num(decision.limit)} {decision.unit} used"
+                f" · {_num(remaining)} {decision.unit} remaining",
+                fg="bright_black",
+                err=True,
+            )
+
+        # Log the command (not its output) so `status` can show activity.
+        cmdlog.record(name, tokens)
         raise SystemExit(ssh.run(spec, tokens, tty=tty))

@@ -29,6 +29,11 @@ def sessions_dir() -> Path:
     return cache_dir() / "sessions"
 
 
+def cmdlog_dir() -> Path:
+    """Temporary per-cluster command log (commands only; cleared on logout)."""
+    return cache_dir() / "cmdlog"
+
+
 def budget_dir() -> Path:
     """Per-cluster budget scripts, alongside the config file."""
     return config_dir() / "budget"
@@ -38,3 +43,4 @@ def ensure_runtime_dirs() -> None:
     """Create the cache-backed runtime directories if they don't exist yet."""
     socket_dir().mkdir(parents=True, exist_ok=True)
     sessions_dir().mkdir(parents=True, exist_ok=True)
+    cmdlog_dir().mkdir(parents=True, exist_ok=True)

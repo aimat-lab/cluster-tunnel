@@ -30,21 +30,30 @@ from typing import Optional
 from cluster_tunnel import ssh
 from cluster_tunnel.ssh import ConnSpec
 
-_PROMPT_KEYS = (
-    b"password",
+# Cluster login asks for two distinct secrets — the service password and the
+# one-time passcode (OTP) — in a sequence whose order varies by site. We classify
+# each prompt by its wording and answer it with the matching secret. OTP keys are
+# checked first because they are the more specific signal.
+_OTP_KEYS = (
     b"passcode",
-    b"passphrase",
     b"verification",
     b"one-time",
     b"otp",
     b"token",
+    b"second factor",
+    b"2fa",
 )
+_PASSWORD_KEYS = (
+    b"password",
+    b"passphrase",
+)
+_PROMPT_KEYS = _OTP_KEYS + _PASSWORD_KEYS
 
 # Renders a throwaway window; exits 0 only if this interpreter's Tk works here.
 _RENDER_PROBE = "import tkinter as tk; r=tk.Tk(); tk.Label(r,text='x').pack(); r.update(); r.destroy()"
 
-# Standalone tkinter dialog, run as a subprocess. Prints {"password","limit"} JSON
-# to stdout on submit, exits non-zero on cancel.
+# Standalone tkinter dialog, run as a subprocess. Prints
+# {"password","otp","limit"} JSON to stdout on submit, exits non-zero on cancel.
 _DIALOG_SCRIPT = r"""
 import os, sys, json
 import tkinter as tk
@@ -52,6 +61,7 @@ import tkinter as tk
 cluster = sys.argv[1] if len(sys.argv) > 1 else "cluster"
 target = sys.argv[2] if len(sys.argv) > 2 else ""
 default_limit = sys.argv[3] if len(sys.argv) > 3 else ""
+unit = sys.argv[4] if len(sys.argv) > 4 else ""
 
 state = {"creds": None}
 root = tk.Tk()
@@ -66,15 +76,23 @@ frm.pack(fill="both", expand=True)
 tk.Label(frm, text="Authenticate to " + cluster, font=("", 11, "bold")).grid(
     row=0, column=0, columnspan=2, sticky="w")
 tk.Label(frm, text=target, fg="#666").grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 10))
-tk.Label(frm, text="Password / OTP:").grid(row=2, column=0, sticky="e", padx=(0, 8), pady=4)
+
+tk.Label(frm, text="Password:").grid(row=2, column=0, sticky="e", padx=(0, 8), pady=4)
 pw = tk.StringVar()
 e1 = tk.Entry(frm, show="*", textvariable=pw, width=30)
 e1.grid(row=2, column=1, sticky="we", pady=4)
-tk.Label(frm, text="Session limit:").grid(row=3, column=0, sticky="e", padx=(0, 8), pady=4)
+
+tk.Label(frm, text="OTP / passcode:").grid(row=3, column=0, sticky="e", padx=(0, 8), pady=4)
+otp = tk.StringVar()
+e2 = tk.Entry(frm, show="*", textvariable=otp, width=30)
+e2.grid(row=3, column=1, sticky="we", pady=4)
+
+limit_label = "Session limit" + (" (" + unit + ")" if unit else "") + ":"
+tk.Label(frm, text=limit_label).grid(row=4, column=0, sticky="e", padx=(0, 8), pady=4)
 lim = tk.StringVar(value=default_limit)
-tk.Entry(frm, textvariable=lim, width=30).grid(row=3, column=1, sticky="we", pady=4)
+tk.Entry(frm, textvariable=lim, width=30).grid(row=4, column=1, sticky="we", pady=4)
 err = tk.StringVar()
-tk.Label(frm, textvariable=err, fg="red").grid(row=4, column=0, columnspan=2, sticky="w")
+tk.Label(frm, textvariable=err, fg="red").grid(row=5, column=0, columnspan=2, sticky="w")
 
 def submit(event=None):
     if not pw.get():
@@ -88,7 +106,7 @@ def submit(event=None):
         except ValueError:
             err.set("Limit must be a number (or blank).")
             return
-    state["creds"] = {"password": pw.get(), "limit": limit}
+    state["creds"] = {"password": pw.get(), "otp": otp.get(), "limit": limit}
     root.quit()
 
 def cancel(event=None):
@@ -96,16 +114,24 @@ def cancel(event=None):
     root.quit()
 
 btns = tk.Frame(frm)
-btns.grid(row=5, column=0, columnspan=2, pady=(10, 0), sticky="e")
+btns.grid(row=6, column=0, columnspan=2, pady=(10, 0), sticky="e")
 tk.Button(btns, text="Cancel", command=cancel).pack(side="right", padx=(6, 0))
-tk.Button(btns, text="Login", command=submit, default="active").pack(side="right")
+login_btn = tk.Button(
+    btns, text="Login", command=submit, default="active",
+    bg="#a6e3a1", activebackground="#94d68f", fg="#14341a",
+    activeforeground="#14341a",
+)
+login_btn.pack(side="right")
+# Enter submits from anywhere in the dialog; Escape / window-close cancels.
 root.bind("<Return>", submit)
+root.bind("<KP_Enter>", submit)
 root.bind("<Escape>", cancel)
 root.protocol("WM_DELETE_WINDOW", cancel)
 e1.focus_set()
 
 if os.environ.get("CTUN_DIALOG_AUTOTEST"):  # test hook: auto-fill + submit
     pw.set(os.environ["CTUN_DIALOG_AUTOTEST"])
+    otp.set(os.environ.get("CTUN_DIALOG_AUTOTEST_OTP", ""))
     root.after(400, submit)
 
 root.mainloop()
@@ -122,6 +148,7 @@ sys.stdout.write(json.dumps(state["creds"]))
 @dataclass
 class Credentials:
     password: str
+    otp: Optional[str]
     limit: Optional[float]
 
 
@@ -154,9 +181,13 @@ def gui_available() -> bool:
 
 
 def prompt_credentials(
-    cluster_name: str, target: str, default_limit: Optional[float]
+    cluster_name: str, target: str, default_limit: Optional[float], unit: str = "units"
 ) -> Optional[Credentials]:
-    """Show the blocking tkinter dialog; return Credentials, or None if cancelled."""
+    """Show the blocking tkinter dialog; return Credentials, or None if cancelled.
+
+    ``unit`` is shown in brackets after the session-limit label (e.g. "Session
+    limit (gpuh):").
+    """
     py = _dialog_python()
     if py is None:
         return None
@@ -167,6 +198,7 @@ def prompt_credentials(
         cluster_name,
         target,
         "" if default_limit is None else str(default_limit),
+        unit or "",
     ]
     res = subprocess.run(args, capture_output=True, text=True)
     if res.returncode != 0 or not res.stdout.strip():
@@ -175,7 +207,11 @@ def prompt_credentials(
         data = json.loads(res.stdout.strip().splitlines()[-1])
     except (ValueError, IndexError):
         return None
-    return Credentials(password=data["password"], limit=data.get("limit"))
+    return Credentials(
+        password=data["password"],
+        otp=(data.get("otp") or None),
+        limit=data.get("limit"),
+    )
 
 
 def _looks_like_prompt(buf: bytes) -> bool:
@@ -183,11 +219,43 @@ def _looks_like_prompt(buf: bytes) -> bool:
     return any(key in low for key in _PROMPT_KEYS)
 
 
-def login_with_password(spec: ConnSpec, password: str, timeout: int) -> bool:
-    """Open the SSH master in a pty, typing `password` at the prompt; wait for live."""
+def _classify_prompt(buf: bytes) -> Optional[str]:
+    """Classify the most recent prompt as ``"otp"``, ``"password"``, or ``None``.
+
+    OTP keywords are tested first: an OTP prompt rarely contains "password", but a
+    banner or password prompt could mention a token, so the more specific signal
+    wins.
+    """
+    low = buf.lower()
+    if any(key in low for key in _OTP_KEYS):
+        return "otp"
+    if any(key in low for key in _PASSWORD_KEYS):
+        return "password"
+    return None
+
+
+def login_with_password(
+    spec: ConnSpec,
+    password: str,
+    otp: Optional[str],
+    timeout: int,
+    verbose: int = 0,
+) -> bool:
+    """Open the SSH master in a pty, answering the password and OTP prompts.
+
+    The cluster asks for the service password and the one-time passcode in a
+    sequence whose order varies by site; each prompt is classified by its wording
+    (:func:`_classify_prompt`) and answered with the matching secret. Each secret
+    is sent at most once. A missing/blank ``otp`` simply means OTP prompts go
+    unanswered (for clusters that do not use one). With ``verbose`` > 0, ssh's own
+    diagnostics are captured and printed to stderr if the login fails.
+    """
     spec.socket.parent.mkdir(parents=True, exist_ok=True)
     ssh.ensure_clean_socket(spec)
-    argv = ssh.open_master_argv(spec)
+    argv = ssh.open_master_argv(spec, verbose)
+
+    secrets = {"password": password, "otp": otp}
+    sent = {"password": False, "otp": False}
 
     pid, fd = pty.fork()
     if pid == 0:  # child: become the ssh master, attached to the pty
@@ -197,8 +265,8 @@ def login_with_password(spec: ConnSpec, password: str, timeout: int) -> bool:
             os._exit(127)
 
     deadline = time.time() + timeout
-    sent = False
     buf = b""
+    transcript = b""
     try:
         while time.time() < deadline:
             if ssh.is_live(spec):
@@ -215,13 +283,17 @@ def login_with_password(spec: ConnSpec, password: str, timeout: int) -> bool:
                 if not data:  # child exited / EOF
                     break
                 buf += data
-                if not sent and _looks_like_prompt(buf):
+                transcript += data
+                kind = _classify_prompt(buf)
+                if kind and not sent[kind] and secrets.get(kind):
                     try:
-                        os.write(fd, password.encode() + b"\n")
+                        os.write(fd, secrets[kind].encode() + b"\n")
                     except OSError:
                         break
-                    sent = True
-                    buf = b""
+                    sent[kind] = True
+                    buf = b""  # start fresh so the next prompt is classified alone
+                else:
+                    buf = buf[-256:]  # bound the buffer to the current prompt line
     finally:
         try:
             os.close(fd)
@@ -233,8 +305,13 @@ def login_with_password(spec: ConnSpec, password: str, timeout: int) -> bool:
             pass
 
     # brief grace for the backgrounded master to register on the socket
+    live = ssh.is_live(spec)
     for _ in range(6):
-        if ssh.is_live(spec):
-            return True
+        if live:
+            break
         time.sleep(0.3)
-    return ssh.is_live(spec)
+        live = ssh.is_live(spec)
+
+    if not live and verbose and transcript:
+        sys.stderr.write(transcript.decode("utf-8", "replace"))
+    return live

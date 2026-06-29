@@ -50,12 +50,16 @@ def _socket_opts(spec: ConnSpec) -> list[str]:
     return ["-S", str(spec.socket)]
 
 
-def open_master_argv(spec: ConnSpec) -> list[str]:
-    """argv for establishing the persistent master connection."""
-    argv = [
-        "ssh",
-        "-M",
-        "-S", str(spec.socket),
+def open_master_argv(spec: ConnSpec, verbose: int = 0) -> list[str]:
+    """argv for establishing the persistent master connection.
+
+    ``verbose`` (0-3) adds ssh's own ``-v``/``-vv``/``-vvv`` flags so connection
+    failures (auth, host key, network) print ssh's diagnostics.
+    """
+    argv = ["ssh", "-M", "-S", str(spec.socket)]
+    if verbose:
+        argv.append("-" + "v" * min(verbose, 3))
+    argv += [
         "-o", f"ControlPersist={spec.control_persist}",
         "-o", f"ServerAliveInterval={spec.server_alive_interval}",
         "-o", f"ServerAliveCountMax={spec.server_alive_count_max}",
@@ -77,25 +81,30 @@ def ensure_clean_socket(spec: ConnSpec) -> None:
         spec.socket.unlink(missing_ok=True)
 
 
-def open_master(spec: ConnSpec) -> int:
+def open_master(spec: ConnSpec, verbose: int = 0) -> int:
     """Run the interactive master ssh in the current TTY; return its exit code.
 
     `-f` backgrounds the master after authentication, so this returns promptly
-    once the OTP has been entered (or immediately for key-based auth).
+    once the OTP has been entered (or immediately for key-based auth). With
+    ``verbose`` > 0, ssh's diagnostics stream straight to the current terminal.
     """
     spec.socket.parent.mkdir(parents=True, exist_ok=True)
     ensure_clean_socket(spec)
-    return subprocess.run(open_master_argv(spec)).returncode
+    return subprocess.run(open_master_argv(spec, verbose)).returncode
 
 
-def is_live(spec: ConnSpec) -> bool:
-    """True if the master connection is alive (`ssh -O check`)."""
-    res = subprocess.run(
+def check(spec: ConnSpec) -> subprocess.CompletedProcess:
+    """Probe the master via ``ssh -O check``, capturing its output."""
+    return subprocess.run(
         ["ssh", *_socket_opts(spec), "-O", "check", spec.target],
         capture_output=True,
         text=True,
     )
-    return res.returncode == 0
+
+
+def is_live(spec: ConnSpec) -> bool:
+    """True if the master connection is alive (`ssh -O check`)."""
+    return check(spec).returncode == 0
 
 
 def run(spec: ConnSpec, tokens: list[str], *, tty: bool = False) -> int:
