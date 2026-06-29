@@ -1,0 +1,21 @@
+[Unit]
+Description=Close all cluster-tunnel (ctun) SSH tunnels on logout/shutdown
+Documentation=https://github.com/aimat-lab/cluster-tunnel
+
+[Service]
+# A oneshot service that does nothing on start and runs `ctun logout` on stop.
+# `RemainAfterExit=yes` keeps it "active" after ExecStart finishes, so that when
+# the user's systemd manager shuts down (on logout, reboot, or power off) it
+# stops the unit and fires ExecStop. Tearing down a tunnel only talks to the
+# local SSH control socket, so it still works after the network is gone.
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+# Absolute path: systemd user services have a minimal PATH. This is where
+# `uv tool install` puts ctun; adjust if you installed it elsewhere
+# (run `command -v ctun` to find out). `-` ignores a non-zero exit (e.g. when
+# no config exists yet) so it never blocks shutdown.
+ExecStop=-%h/.local/bin/ctun logout
+
+[Install]
+WantedBy=default.target

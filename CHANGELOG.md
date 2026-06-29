@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `systemd/` logout-on-shutdown hook: a systemd **user** service whose
+  `ExecStop` runs `ctun logout` on every logout, reboot, or power off, so live
+  tunnels are torn down cleanly instead of leaving stale state. Includes an
+  `install.sh` (install/`--remove`) and a README.
 - `cluster-tunnel` agent **skill** under `skill/` — a Claude Code / Agent-Skills
   skill that teaches a coding agent to drive clusters through `ctun`: the
   startup workflow (status → info → interactive login → run), the per-session
