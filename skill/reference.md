@@ -151,7 +151,7 @@ clusters:
       max_gpus_per_job: 4
     budget:                     # omit to run unguarded
       script: budget/haicore.sh
-      unit: gpuh
+      unit: jobh                # job-hours: Slurm job wall-clock since session start
       guard_commands: [sbatch, srun, salloc]
       fail_mode: closed         # if the budget script errors: closed blocks, open allows
 ```

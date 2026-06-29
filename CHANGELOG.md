@@ -40,6 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The default budget metric is now **job-hours** (Slurm job wall-clock time since
+  the session started, clamped to the session window; concurrent jobs add up),
+  computed from `sacct` and working on any cluster with Slurm accounting. The
+  bundled `budget_templates/` scripts and the example config use `unit: jobh`
+  (previously the haicore template reported GPU-hours and the horeka template
+  CPU core-hours).
 - `info` now renders each cluster as a Rich panel (description, connection,
   restrictions, budget) and, when no `-t` target is given, prints a panel for
   every configured cluster instead of requiring a target.

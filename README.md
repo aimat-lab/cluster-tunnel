@@ -82,12 +82,10 @@ $ uv tool install .
 $ ctun --help
 ```
 
-Or with pip / pipx:
+Or with pip:
 
 ```console
 $ pip install .         # into the current environment
-# or
-$ pipx install .        # isolated, on your PATH
 ```
 
 For local development:
@@ -218,10 +216,16 @@ usage vs. limit. Works even without a live tunnel.
 ### `logout` — close the tunnel
 
 ```console
-$ ctun -t horeka logout
+$ ctun -t horeka logout              # one cluster
+$ ctun logout                        # all configured clusters
 ```
 
-Tears down the master connection and clears the session record.
+Tears down the master connection and clears the session record. Without a
+target, it logs out every configured cluster.
+
+To run `ctun logout` **automatically on every logout, reboot, or shutdown**,
+install the systemd user hook in [`systemd/`](./systemd/) (`cd systemd &&
+./install.sh`). See [systemd/README.md](./systemd/README.md) for details.
 
 ### `config` — manage the config file
 
@@ -278,9 +282,9 @@ clusters:
       allowed_partitions: [accelerated, cpuonly]
 
     budget:                       # omit this whole block to run the cluster unguarded
-      script: budget/horeka.sh    # script that reports compute used since the session started
+      script: budget/horeka.sh    # script that reports usage since the session started
       session_limit: 500          # default budget; overridden by `login --limit`
-      unit: core-hours            # label for display
+      unit: jobh                  # label for display (bundled scripts report job-hours)
       guard_commands: [sbatch, srun, salloc]   # commands subject to the budget check
       fail_mode: closed           # if the budget script errors: "closed" blocks, "open" allows
 
@@ -310,18 +314,23 @@ Before running a command whose first word is in `guard_commands` (`sbatch`, `sru
 `salloc`), `ctun`:
 
 1. Runs the cluster's **budget script** on the login node (over the live tunnel).
-2. Reads the single number it prints — the compute used since the session started.
+2. Reads the single number it prints — the usage since the session started.
 3. Blocks the command if `used ≥ limit`; otherwise lets it run.
 
 Commands that aren't job submissions (`ls`, `squeue`, `sacct`, …) always pass through. If
 no limit is set for the cluster, it runs unguarded.
 
+The default metric is **job-hours**: the Slurm job *wall-clock* time you have run since the
+session started, counting only the portion of each job inside the session window (concurrent
+jobs add up). The bundled budget scripts (`ctun config --init` copies them next to your
+config) compute this from `sacct` and work on any cluster with Slurm accounting enabled.
+
 ### Writing a budget script
 
 A budget script lives next to your config (e.g.
 `~/.config/cluster-tunnel/budget/horeka.sh`) and runs **on the cluster login node**. It
-receives three arguments and must print **one number** (the compute used since the session
-start) to standard output:
+receives three arguments and must print **one number** (the usage since the session start)
+to standard output:
 
 | Argument | Value |
 |---|---|
@@ -329,26 +338,32 @@ start) to standard output:
 | `$2` | cluster name |
 | `$3` | your username on the cluster |
 
-Example — CPU core-hours consumed since the session started, via Slurm accounting:
+Example — job wall-clock hours since the session started, via Slurm accounting (this is the
+bundled default; concurrent jobs add up, each clamped to the session window):
 
 ```bash
 #!/usr/bin/env bash
-set -euo pipefail
+set -u
 start="$(date -d "@$1" +%Y-%m-%dT%H:%M:%S)"
-# core-hours = Σ (AllocCPUS × ElapsedRaw[s]) / 3600 over the user's jobs since `start`
-sacct -u "$3" -S "$start" -X -n -P -o AllocCPUS,ElapsedRaw \
-  | awk -F'|' '{ s += $1 * $2 } END { printf "%.3f\n", s / 3600 }'
+# job-hours = Σ over the user's jobs of time-within-[start, now], from sacct Start/End
+sacct -u "$3" -S "$start" -X -n -P -o Start,End,State \
+  | awk -F'|' -v W="$1" -v NOW="$(date +%s)" '
+      function ep(t){ if (t=="Unknown"||t==""||t=="None") return -1; gsub(/[-T:]/," ",t); return mktime(t) }
+      { st=ep($1); if (st<0) next; en=ep($2); if (en<0) en=NOW;
+        lo=(st>W?st:W); hi=(en<NOW?en:NOW); if (hi>lo) sum+=hi-lo }
+      END { printf "%.3f\n", (sum>0?sum:0)/3600 }'
 ```
 
 The unit is whatever your script reports; set `session_limit` and `--limit` in the same
-unit. If the script exits non-zero, `fail_mode` decides what happens (`closed` blocks the
-submission, `open` allows it).
+unit (the bundled scripts report `jobh`). For a different metric — GPU-hours, core-hours,
+node-hours — adapt the script and label `unit` accordingly. If the script exits non-zero,
+`fail_mode` decides what happens (`closed` blocks the submission, `open` allows it).
 
 Example of the guard in action:
 
 ```console
 $ ctun -t horeka run -- sbatch big.sh
-BLOCKED on horeka: session budget exhausted: 503.2 >= 500.0 core-hours. Command not submitted.
+BLOCKED on horeka: session budget exhausted: 503.2 >= 500.0 jobh. Command not submitted.
 ```
 
 ---

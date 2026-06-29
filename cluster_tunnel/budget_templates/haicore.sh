@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# horeka.sh — ctun budget script: total Slurm job *wall-clock hours* for the
+# haicore.sh — ctun budget script: total Slurm job *wall-clock hours* for the
 # user, counting only the portion of each job that falls within the current
 # session window [start_epoch, now]. Concurrent jobs add up (2 jobs running 1h
 # = 2 job-hours). Prints a single number (job-hours) on stdout.
 #
-# This is the general ctun budget metric: plain job-running-hours from Slurm
-# accounting (sacct), identical across clusters. It is an illustrative template
-# — verify `sacct` is available and reports Start/End on your cluster.
+# This is the general ctun budget metric: plain job-running-hours derived from
+# Slurm accounting (sacct), which works on any cluster with sacct enabled. Copy
+# it per cluster (budget/<cluster>.sh) and point the cluster's `budget.script`
+# at it; the logic is identical regardless of cluster.
 #
 # Invoked by ctun as `bash -s -- <start_epoch> <cluster> <user>`:
 #   $1 = session start time (epoch seconds)

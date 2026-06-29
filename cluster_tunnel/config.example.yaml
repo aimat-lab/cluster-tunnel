@@ -13,13 +13,6 @@ agent:
 
 clusters:
 
-  # A local test "cluster" pointing at this machine's own sshd — handy for trying
-  # ctun end-to-end without a remote node. No budget block => unguarded.
-  localhost:
-    host: localhost
-    description: |
-      Local machine via its own sshd. For testing ctun itself.
-
   # Example KIT cluster with a session budget guard (uncomment & adjust):
   # horeka:
   #   host: horeka.scc.kit.edu
@@ -33,10 +26,24 @@ clusters:
   #     max_job_runtime: "48:00:00"
   #     allowed_partitions: [accelerated, cpuonly]
   #   budget:                        # omit to run unguarded
-  #     script: budget/horeka.sh     # remote script; prints compute used since session start
+  #     script: budget/horeka.sh     # prints job-hours used since the session started
   #     session_limit: 500
-  #     unit: core-hours
+  #     unit: jobh                   # job-hours (Slurm job wall-clock; concurrent jobs add up)
   #     guard_commands: [sbatch, srun, salloc]
+  #     fail_mode: closed
+
+  # HAICORE @ KIT (NHR) — GPU cluster. The bundled budget/haicore.sh (copied here
+  # by `ctun config --init`) reports session job-hours: the Slurm job wall-clock
+  # time the user has run since the session started (concurrent jobs add up).
+  # haicore:
+  #   host: haicore.scc.kit.edu
+  #   user: tm4030
+  #   requires_otp: true
+  #   budget:                        # omit / leave session_limit unset to run unguarded
+  #     script: budget/haicore.sh    # bundled; job wall-clock hours since session start
+  #     session_limit: 200           # max job-hours per session (or pass `ctun login -l N`)
+  #     unit: jobh
+  #     guard_commands: [sbatch, srun, salloc, aslurm, aslurmx]
   #     fail_mode: closed
 
 webui:

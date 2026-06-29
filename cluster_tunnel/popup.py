@@ -186,7 +186,7 @@ def prompt_credentials(
     """Show the blocking tkinter dialog; return Credentials, or None if cancelled.
 
     ``unit`` is shown in brackets after the session-limit label (e.g. "Session
-    limit (gpuh):").
+    limit (jobh):").
     """
     py = _dialog_python()
     if py is None:
