@@ -50,7 +50,7 @@ def create_cli():
     """Create and return the root CLI group."""
 
     @click.group(cls=CLI, context_settings={"show_default": True})
-    @click.version_option(version=get_version(), prog_name="ctun")
+    @click.version_option(version=get_version(), message="%(version)s")
     @click.option("-t", "--target", default=None, help="Cluster to act on (from config).")
     @click.option(
         "-c", "--config", "config_path", default=None, type=click.Path(),
