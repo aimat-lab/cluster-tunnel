@@ -36,6 +36,22 @@ def test_prompt_parses_without_otp(monkeypatch) -> None:
     assert creds.otp is None
 
 
+def test_prompt_parses_blank_password(monkeypatch) -> None:
+    # A cluster with no service password: the dialog may return an empty password,
+    # which must be accepted (the driver simply never sends it).
+    monkeypatch.setattr(popup, "_dialog_python", lambda: "/usr/bin/python3")
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda args, **k: subprocess.CompletedProcess(
+            args, 0, '{"password":"","otp":"123456","limit":null}', ""
+        ),
+    )
+    creds = popup.prompt_credentials("k", "u@h", None)
+    assert creds.password == ""
+    assert creds.otp == "123456"
+
+
 def test_prompt_forwards_requires_otp_flag(monkeypatch) -> None:
     captured: dict = {}
 

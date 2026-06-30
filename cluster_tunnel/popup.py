@@ -79,10 +79,15 @@ tk.Label(frm, text="Authenticate to " + cluster, font=("", 11, "bold")).grid(
 tk.Label(frm, text=target, fg="#666").grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 10))
 
 row = 2
-tk.Label(frm, text="Password:").grid(row=row, column=0, sticky="e", padx=(0, 8), pady=4)
+tk.Label(frm, text="Password:").grid(row=row, column=0, sticky="e", padx=(0, 8), pady=(4, 0))
 pw = tk.StringVar()
 e1 = tk.Entry(frm, show="*", textvariable=pw, width=30)
-e1.grid(row=row, column=1, sticky="we", pady=4)
+e1.grid(row=row, column=1, sticky="we", pady=(4, 0))
+row += 1
+# The password is optional: some clusters authenticate with key + OTP (or a key
+# alone) and never prompt for one. A blank field simply means none is sent.
+tk.Label(frm, text="blank if this cluster needs no password", fg="#888").grid(
+    row=row, column=1, sticky="w", pady=(0, 4))
 row += 1
 
 # The OTP field is shown only when the cluster requires a one-time passcode;
@@ -104,9 +109,8 @@ tk.Label(frm, textvariable=err, fg="red").grid(row=row, column=0, columnspan=2, 
 row += 1
 
 def submit(event=None):
-    if not pw.get():
-        err.set("Password required.")
-        return
+    # Password and OTP may both be left blank (key-based auth, or a cluster with
+    # no service password) — only the session limit is validated.
     text = lim.get().strip()
     limit = None
     if text:
@@ -200,7 +204,8 @@ def prompt_credentials(
 
     ``unit`` is shown in brackets after the session-limit label (e.g. "Session
     limit (jobh):"). When ``requires_otp`` is false the dialog omits the OTP
-    field entirely, so only the password and session limit are asked for.
+    field entirely. The password may be left blank for clusters that need none
+    (e.g. key-based auth); a blank secret is simply never sent during login.
     """
     py = _dialog_python()
     if py is None:
