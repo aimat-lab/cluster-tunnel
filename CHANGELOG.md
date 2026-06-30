@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `upload` and `download` commands: transfer files in/out of a cluster with
+  **rsync over the live tunnel** (rides the existing master — no re-auth/OTP).
+  `upload <local-src> <remote-dest>` / `download <remote-src> <local-dest>`,
+  recursive (`-r`), remote paths written bare, `-n/--dry-run`, and extra rsync
+  flags after `--`. Not budget-guarded; fails closed (exit 10) with no live
+  tunnel. The transfer engine sits behind a backend abstraction so a scp/sftp
+  fallback can be added later without changing the CLI.
 - Distinct exit codes for `run` pre-flight failures: `10` (no live tunnel —
   login required), `11` (budget exhausted), `12` (budget guard could not
   verify), each also printing a machine-readable `ctun-error: <marker>` line to

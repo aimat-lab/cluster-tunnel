@@ -50,6 +50,26 @@ def _socket_opts(spec: ConnSpec) -> list[str]:
     return ["-S", str(spec.socket)]
 
 
+def control_opts(spec: ConnSpec) -> list[str]:
+    """ssh options that ride the existing master as a non-master, in batch mode.
+
+    Transfer tools (scp/sftp/rsync) reference the control socket via
+    ``-o ControlPath=`` rather than ssh's ``-S``. ``ControlMaster=no`` makes the
+    tool reuse the master but never *create* one, and ``BatchMode=yes`` means a
+    dead tunnel fails immediately instead of prompting — matching ``run``'s
+    fail-closed contract. This is the single source of truth for "attach to the
+    master" shared by every transfer backend.
+    """
+    opts = [
+        "-o", f"ControlPath={spec.socket}",
+        "-o", "ControlMaster=no",
+        "-o", "BatchMode=yes",
+    ]
+    if spec.identity_file:
+        opts += ["-i", str(Path(spec.identity_file).expanduser())]
+    return opts
+
+
 def open_master_argv(spec: ConnSpec, verbose: int = 0) -> list[str]:
     """argv for establishing the persistent master connection.
 

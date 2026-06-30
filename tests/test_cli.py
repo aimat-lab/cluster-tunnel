@@ -147,6 +147,54 @@ def test_target_completion_handles_bad_config() -> None:
     assert _complete_clusters(_Ctx(), None, "") == []
 
 
+# --- upload / download ---------------------------------------------------------
+
+
+def _patch_transfer(monkeypatch, *, live=True, rc=0):
+    """Isolate transfer commands from ssh/rsync; capture the run_transfer call."""
+    captured = {}
+    monkeypatch.setattr("cluster_tunnel.ssh.conn_spec", lambda config, name: object())
+    monkeypatch.setattr("cluster_tunnel.ssh.is_live", lambda spec: live)
+
+    def fake_run_transfer(spec, direction, src, dest, *, dry_run=False, extra=()):
+        captured.update(direction=direction, src=src, dest=dest,
+                        dry_run=dry_run, extra=tuple(extra))
+        return rc
+
+    monkeypatch.setattr("cluster_tunnel.transfer.run_transfer", fake_run_transfer)
+    return captured
+
+
+def test_upload_dispatches(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    captured = _patch_transfer(monkeypatch)
+    r = CliRunner().invoke(cli, ["-t", "localhost", "upload", "./a", "data"])
+    assert r.exit_code == 0
+    assert captured == {"direction": "upload", "src": "./a", "dest": "data",
+                        "dry_run": False, "extra": ()}
+
+
+def test_download_dry_run_and_passthrough_and_exit_code(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    captured = _patch_transfer(monkeypatch, rc=23)
+    r = CliRunner().invoke(
+        cli, ["-t", "localhost", "download", "-n", "results", "out", "--", "--info=progress2"]
+    )
+    assert r.exit_code == 23  # rsync's exit code propagates
+    assert captured["direction"] == "download"
+    assert captured["src"] == "results" and captured["dest"] == "out"
+    assert captured["dry_run"] is True
+    assert captured["extra"] == ("--info=progress2",)
+
+
+def test_upload_no_live_tunnel_exit_10(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    _patch_transfer(monkeypatch, live=False)
+    r = CliRunner().invoke(cli, ["-t", "localhost", "upload", "./a", "data"])
+    assert r.exit_code == ExitCode.LOGIN_REQUIRED
+    assert "ctun-error: login_required" in r.output
+
+
 # --- machine-readable JSON surface ---------------------------------------------
 
 

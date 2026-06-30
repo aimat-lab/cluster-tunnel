@@ -15,6 +15,7 @@ from cluster_tunnel.cli.base import BaseCLI
 from cluster_tunnel.cli.configcmd import ConfigCommandsMixin
 from cluster_tunnel.cli.context import ContextCommandsMixin
 from cluster_tunnel.cli.execution import ExecutionCommandsMixin
+from cluster_tunnel.cli.transfer import TransferCommandsMixin
 from cluster_tunnel.cli.tunnel import TunnelCommandsMixin
 from cluster_tunnel.cli.webui import WebuiCommandsMixin
 
@@ -22,6 +23,7 @@ from cluster_tunnel.cli.webui import WebuiCommandsMixin
 class CLI(
     TunnelCommandsMixin,
     ExecutionCommandsMixin,
+    TransferCommandsMixin,
     ContextCommandsMixin,
     ConfigCommandsMixin,
     WebuiCommandsMixin,
@@ -32,6 +34,7 @@ class CLI(
     COMMAND_GROUPS = [
         {"name": "Tunnel", "commands": ["login", "status", "logout"]},
         {"name": "Execution", "commands": ["run"]},
+        {"name": "Transfer", "commands": ["upload", "download"]},
         {"name": "Miscellaneous", "commands": ["info", "logs", "config", "webui"]},
     ]
 
@@ -41,6 +44,8 @@ class CLI(
         self.add_command(self.status_command)
         self.add_command(self.logout_command)
         self.add_command(self.run_command)
+        self.add_command(self.upload_command)
+        self.add_command(self.download_command)
         self.add_command(self.info_command)
         self.add_command(self.logs_command)
         self.add_command(self.config_command)

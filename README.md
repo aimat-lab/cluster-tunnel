@@ -218,6 +218,32 @@ Error: Submission blocked on 'horeka': compute budget exhausted.
 exit=11
 ```
 
+### `upload` / `download` — transfer files over the tunnel
+
+```console
+$ ctun -t horeka upload [-n|--dry-run] <local-src> <remote-dest> [-- <rsync args>]
+$ ctun -t horeka download [-n|--dry-run] <remote-src> <local-dest> [-- <rsync args>]
+```
+
+Move files in or out using **rsync over the live tunnel** — it rides the existing
+authenticated connection, so there's **no re-authentication** (no password, no OTP).
+
+- **`upload`** copies a local path → the cluster; **`download`** copies a cluster path →
+  local. The direction decides which side is remote, so remote paths are written **bare**
+  (no `host:` prefix); a relative remote path resolves to your remote `$HOME`.
+- Copies **recursively** (`rsync -r`). Trailing slashes follow rsync's semantics: `data/`
+  copies the *contents* of `data`, `data` copies the directory itself.
+- Transfers are **not** subject to the budget guard (moving data isn't compute), and they
+  **fail closed**: with no live tunnel the command exits `10` (`login_required`) rather than
+  prompting.
+- rsync's own exit code is propagated. Extra rsync flags can follow `--`, e.g.
+  `-- --exclude='*.tmp' -z` or `-- --info=progress2` for a progress display.
+
+```console
+$ ctun -t horeka upload ./dataset $WORK/dataset       # push a folder
+$ ctun -t horeka download logs/run42.out ./run42.out  # pull a result file
+```
+
 ### `status` — tunnel and session state
 
 ```console
