@@ -12,9 +12,10 @@ live tunnel, respect the compute-budget guard, and follow HPC etiquette.
 | `SKILL.md` | Entry point: the startup workflow, the one command shape, golden rules, quick recipes. | When the skill is invoked. |
 | `reference.md` | Full `ctun` CLI reference: every command, flag, JSON output, failure modes. | On demand, when exact flags are needed. |
 | `cluster-etiquette.md` | HPC etiquette, Slurm patterns, the budget guard explained. | On demand, when planning real cluster work. |
+| `monitoring-jobs.md` | Live-monitoring a running Slurm job with the `Monitor` tool over the tunnel. | On demand, after submitting a job. |
 
 This follows the Agent Skills **progressive-disclosure** pattern: `SKILL.md`
-stays short and links one level deep to the two reference files, which cost no
+stays short and links one level deep to the reference files, which cost no
 context until the agent actually reads them.
 
 ## Install it

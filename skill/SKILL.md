@@ -114,6 +114,9 @@ Tips:
   `ctun -t haicore run -- bash -c 'cd $WORK && sbatch job.sh'`.
 - The command's exit code becomes `ctun`'s exit code, and output streams live.
 - Add `--tty` for interactive remote programs that need a pseudo-terminal.
+- After submitting a job, don't poll `squeue` by hand — set up a live monitor
+  that wakes you on state changes and failures: see
+  [monitoring-jobs.md](monitoring-jobs.md).
 
 ## More detail
 
@@ -121,5 +124,8 @@ Tips:
   [reference.md](reference.md).
 - **HPC etiquette, Slurm patterns, and the budget guard explained**: see
   [cluster-etiquette.md](cluster-etiquette.md).
+- **Live-monitoring a running job** (get notified the moment it changes state
+  or fails, via your `Monitor` tool over the tunnel): see
+  [monitoring-jobs.md](monitoring-jobs.md).
 - **How to install this skill** into a project or your personal skills: see
   [README.md](README.md).
