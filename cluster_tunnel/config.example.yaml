@@ -13,7 +13,12 @@ agent:
 
 clusters:
 
-  # Example KIT cluster with a session budget guard (uncomment & adjust):
+  # HOREKA @ KIT
+  # ===============================
+  # HoreKa — KIT's NHR (national tier-2) supercomputer. CPU + GPU nodes;
+  # GPU jobs go to the 'accelerated' partition, CPU-only work to 'cpuonly'.
+  # Login requires a one-time password (OTP).
+  # ===============================
   # horeka:
   #   host: horeka.scc.kit.edu
   #   user: ab1234
@@ -29,18 +34,72 @@ clusters:
   #     script: budget/horeka.sh     # prints job-hours used since the session started
   #     session_limit: 500
   #     unit: jobh                   # job-hours (Slurm job wall-clock; concurrent jobs add up)
-  #     guard_commands: [sbatch, srun, salloc]
+  #     guard_commands: [sbatch, srun, salloc, aslurm, aslurmx]
   #     fail_mode: closed
 
-  # HAICORE @ KIT (NHR) — GPU cluster. The bundled budget/haicore.sh (copied here
-  # by `ctun config --init`) reports session job-hours: the Slurm job wall-clock
-  # time the user has run since the session started (concurrent jobs add up).
+  # HAICORE @ KIT
+  # ===============================
+  # HAICORE — Helmholtz AI COmpute REsources @ KIT (NHR): a GPU cluster for
+  # AI / machine-learning workloads. Login requires a one-time password (OTP).
+  # ===============================
   # haicore:
   #   host: haicore.scc.kit.edu
   #   user: ab1234
   #   requires_otp: true
   #   budget:                        # omit / leave session_limit unset to run unguarded
   #     script: budget/haicore.sh    # bundled; job wall-clock hours since session start
+  #     session_limit: 200           # max job-hours per session (or pass `ctun login -l N`)
+  #     unit: jobh
+  #     guard_commands: [sbatch, srun, salloc, aslurm, aslurmx]
+  #     fail_mode: closed
+
+  # KCIST @ KIT
+  # ===============================
+  # KCIST — a KIT NVIDIA DeepOps Slurm GPU cluster (login2.kcist.kit.edu).
+  # No OTP required; GPU nodes scheduled via Slurm, no enforced usage quotas.
+  # ===============================
+  # kcist:
+  #   host: login2.kcist.kit.edu
+  #   user: ab1234
+  #   requires_otp: false
+  #   budget:                        # omit / leave session_limit unset to run unguarded
+  #     script: budget/kcist.sh      # bundled; job wall-clock hours since session start
+  #     session_limit: 100           # max job-hours per session (or pass `ctun login -l N`)
+  #     unit: jobh
+  #     guard_commands: [sbatch, srun, salloc, aslurm, aslurmx]
+  #     fail_mode: closed
+
+  # INT-NANO @ KIT
+  # ===============================
+  # int-nano — KIT Institute of Nanotechnology (INT) Slurm cluster. No OTP
+  # required. Set the real login host before use, and verify `sacct` reports
+  # Start/End for the budget probe.
+  # ===============================
+  # intnano:
+  #   host: intnano.example          # set the real login host
+  #   user: ab1234
+  #   requires_otp: false
+  #   budget:                        # omit / leave session_limit unset to run unguarded
+  #     script: budget/intnano.sh    # bundled; job wall-clock hours since session start
+  #     session_limit: 200           # max job-hours per session (or pass `ctun login -l N`)
+  #     unit: jobh
+  #     guard_commands: [sbatch, srun, salloc, aslurm, aslurmx]
+  #     fail_mode: closed
+
+  # BWUNICLUSTER 3.0 @ KIT / bwHPC
+  # ===============================
+  # bwUniCluster 3.0 (uc3) — Baden-Württemberg bwHPC general-purpose cluster,
+  # operated at KIT. The login host uc3.scc.kit.edu is load-balanced over the
+  # login nodes and requires 2FA. KIT users prefix their username with 'ka_'.
+  # ===============================
+  # bwuni3:
+  #   host: uc3.scc.kit.edu
+  #   user: ka_ab1234                # KIT users: 'ka_' prefix + local username
+  #   requires_otp: true             # 2FA: service password + OTP
+  #   description: |
+  #     bwUniCluster 3.0 (uc3) @ KIT/bwHPC — general-purpose state cluster.
+  #   budget:                        # omit / leave session_limit unset to run unguarded
+  #     script: budget/bwuni3.sh     # bundled; job wall-clock hours since session start
   #     session_limit: 200           # max job-hours per session (or pass `ctun login -l N`)
   #     unit: jobh
   #     guard_commands: [sbatch, srun, salloc, aslurm, aslurmx]
