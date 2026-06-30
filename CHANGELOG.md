@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Distinct exit codes for `run` pre-flight failures: `10` (no live tunnel —
+  login required), `11` (budget exhausted), `12` (budget guard could not
+  verify), each also printing a machine-readable `ctun-error: <marker>` line to
+  stderr, so a coding agent can branch on the failure without scraping text. The
+  remote command's own exit code is still propagated unchanged, and `--dry-run`
+  now exits with the would-be code so it doubles as a pre-flight check.
+- Shell completion. The top-level `--init-completion <bash|zsh|fish>` option
+  prints an activation script (mirroring `--version`), and `-t/--target`
+  completes the cluster names from the active config — read live, so adding a
+  cluster makes it completable immediately.
+- `skill/monitoring-jobs.md`: guidance for live-monitoring a running Slurm job
+  via the agent's `Monitor` tool over the tunnel — tracking Slurm state
+  transitions and watching the log for progress and failures, with the rule that
+  every terminal state must be surfaced ("silence is not success").
 - `systemd/` logout-on-shutdown hook: a systemd **user** service whose
   `ExecStop` runs `ctun logout` on every logout, reboot, or power off, so live
   tunnels are torn down cleanly instead of leaving stale state. Includes an
@@ -88,6 +102,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The interactive login pop-up (`login --interactive`) now omits the OTP field
   for clusters configured with `requires_otp: false`, asking only for the
   password and session limit.
+
+- `config --validate` now also reports advisory warnings that pydantic can't
+  catch: a cluster whose `budget.script` doesn't exist on disk (the guard would
+  fail — and with `fail_mode: closed` block every submission), and a
+  `guard_commands` entry that isn't a valid regex (it would silently fall back
+  to a literal match). The config is still reported as structurally valid, but
+  the command exits non-zero when any warning is present.
+
+- `info --json` now includes a top-level `ctun_version`, so an agent reading the
+  briefing can record or condition on the tool version.
+- `status --json` now always includes `target` (the ssh destination), `unit`,
+  and `limit` at the top level of each cluster row — previously `unit`/`limit`
+  were only reachable inside the nested `session` object (and absent when there
+  was no session), forcing consumers to special-case missing keys.
+- `run` now warns (in yellow) before the hard block when a guarded command
+  pushes session usage to ≥80% of the limit — e.g. `budget: approaching limit
+  — 90% used · …` — so an agent can pace submissions instead of hitting the wall
+  unannounced. Below the threshold the usual gray budget line is shown.
+
+### Fixed
+
+- Bundled budget scripts (`budget_templates/{haicore,horeka}.sh`) now compute
+  epoch seconds with `date` instead of `awk`'s gawk-only `mktime()`, so the
+  budget probe works on clusters whose default `awk` is **mawk** (e.g.
+  Debian/Ubuntu). Previously the probe failed there and, with the default
+  `fail_mode: closed`, silently blocked every job submission. The README example
+  budget script was updated to match.
 
 ## [0.1.0] - 2026-06-25
 

@@ -185,13 +185,37 @@ $ ctun -t horeka run [--tty] [-n|--dry-run] -- <command> [args…]
 - The command's **exit code is propagated** as `ctun`'s exit code, and output is streamed
   live.
 - `--tty` allocates a pseudo-terminal for interactive remote programs.
-- `-n, --dry-run` reports the budget decision without executing.
+- `-n, --dry-run` reports the budget decision without executing; it exits with the same code
+  it *would* have used (see below), so it doubles as a pre-flight check.
 - If there is no live tunnel, `run` **fails immediately** with a message telling you to
   `login` — it never silently prompts for a password.
 
 ```console
 $ ctun -t horeka run -- squeue --me
 $ ctun -t horeka run -- bash -c 'cd $WORK && sbatch job.sh'
+```
+
+#### Exit codes
+
+So a caller (especially a coding agent) can tell *why* `run` stopped, ctun's own
+failures use distinct exit codes and also print a stable `ctun-error: <marker>` line to
+stderr. A successful command's own exit code passes straight through, so these codes are
+reserved for ctun's pre-flight failures:
+
+| Exit code | `ctun-error:` marker | Meaning |
+|---|---|---|
+| `10` | `login_required` | No live tunnel — run `login` again. |
+| `11` | `budget_exhausted` | A guarded command was blocked: session usage is at/over the limit. |
+| `12` | `budget_guard_error` | A guarded command was blocked because the budget could not be verified (fail-closed). |
+| *N* | — | The remote command's **own** exit code (0–255), propagated unchanged. |
+| `2` | — | Usage error (e.g. no command after `--`). |
+
+```console
+$ ctun -t horeka run -- sbatch big.sh ; echo "exit=$?"
+ctun-error: budget_exhausted
+Error: Submission blocked on 'horeka': compute budget exhausted.
+  ...
+exit=11
 ```
 
 ### `status` — tunnel and session state
@@ -234,8 +258,24 @@ $ ctun config                  # open in $EDITOR
 $ ctun config -i|--init        # create a starter config if none exists
 $ ctun config -p|--path        # print the config file path
 $ ctun config -s|--show        # print the resolved config
-$ ctun config --validate       # check the config for errors
+$ ctun config --validate       # check for errors + warn on missing budget
+                               # scripts / invalid guard_commands regexes
 ```
+
+### Shell completion
+
+`ctun` can complete subcommands, flags, and — dynamically from your config — **cluster
+names after `-t/--target`**. Enable it once per shell with the top-level
+`--init-completion` option (it prints the activation script and exits):
+
+```console
+$ ctun --init-completion bash >> ~/.bashrc          # bash
+$ ctun --init-completion zsh  >> ~/.zshrc           # zsh
+$ ctun --init-completion fish >  ~/.config/fish/completions/ctun.fish   # fish
+```
+
+Restart the shell, then `ctun -t <TAB>` offers the clusters from your `config.yaml`
+(add a cluster and it completes immediately — the candidate list is read live).
 
 ### `webui`
 
@@ -341,17 +381,25 @@ to standard output:
 Example — job wall-clock hours since the session started, via Slurm accounting (this is the
 bundled default; concurrent jobs add up, each clamped to the session window):
 
+Epochs are computed with `date` (GNU coreutils), not awk's gawk-only `mktime()`, so this
+runs under any awk (including mawk, the default on Debian/Ubuntu):
+
 ```bash
 #!/usr/bin/env bash
 set -u
-start="$(date -d "@$1" +%Y-%m-%dT%H:%M:%S)"
-# job-hours = Σ over the user's jobs of time-within-[start, now], from sacct Start/End
-sacct -u "$3" -S "$start" -X -n -P -o Start,End,State \
-  | awk -F'|' -v W="$1" -v NOW="$(date +%s)" '
-      function ep(t){ if (t=="Unknown"||t==""||t=="None") return -1; gsub(/[-T:]/," ",t); return mktime(t) }
-      { st=ep($1); if (st<0) next; en=ep($2); if (en<0) en=NOW;
-        lo=(st>W?st:W); hi=(en<NOW?en:NOW); if (hi>lo) sum+=hi-lo }
-      END { printf "%.3f\n", (sum>0?sum:0)/3600 }'
+export LC_ALL=C   # locale-independent number formatting (avoid e.g. "2,000")
+start_iso="$(date -d "@$1" +%Y-%m-%dT%H:%M:%S)"
+now="$(date +%s)"; sum=0
+# job-hours = Σ over the user's jobs of time-within-[start, now], from sacct Start/End.
+while IFS='|' read -r s e _; do
+    [ -n "$s" ] || continue
+    st="$(date -d "$s" +%s 2>/dev/null)" || continue
+    case "$e" in ''|Unknown|None) en="$now" ;; *) en="$(date -d "$e" +%s 2>/dev/null)"; [ -n "$en" ] || en="$now" ;; esac
+    lo="$1"; [ "$st" -gt "$lo" ] && lo="$st"        # clamp to the session window
+    hi="$now"; [ "$en" -lt "$hi" ] && hi="$en"
+    [ "$hi" -gt "$lo" ] && sum=$(( sum + hi - lo ))  # concurrent jobs add up
+done <<< "$(sacct -u "$3" -S "$start_iso" -X -n -P -o Start,End,State 2>/dev/null)"
+awk -v s="$sum" 'BEGIN { printf "%.3f\n", s/3600 }'
 ```
 
 The unit is whatever your script reports; set `session_limit` and `--limit` in the same
