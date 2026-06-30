@@ -8,11 +8,16 @@
 # accounting (sacct), identical across clusters. It is an illustrative template
 # — verify `sacct` is available and reports Start/End on your cluster.
 #
+# Portable across awk implementations: epochs are computed with `date` (GNU
+# coreutils), not awk's gawk-only mktime(), so the probe works under mawk too
+# (the default awk on Debian/Ubuntu).
+#
 # Invoked by ctun as `bash -s -- <start_epoch> <cluster> <user>`:
 #   $1 = session start time (epoch seconds)
 #   $2 = cluster name (unused)
 #   $3 = cluster username
 set -u
+export LC_ALL=C   # locale-independent number formatting (avoid e.g. "2,000")
 
 start_epoch="${1:-0}"
 user="${3:-${USER:-}}"
@@ -40,11 +45,24 @@ if [ "$rc" -ne 0 ]; then
     echo "sacct failed (rc $rc)" >&2; exit "$rc"
 fi
 
-printf '%s\n' "$rows" | awk -F'|' -v W="$start_epoch" -v NOW="$(date +%s)" '
-    function ep(t){ if (t=="Unknown" || t=="" || t=="None") return -1;
-                    gsub(/[-T:]/," ",t); return mktime(t) }
-    { st=ep($1); if (st<0) next;          # skip jobs with no real start time
-      en=ep($2); if (en<0) en=NOW;        # still running -> up to now
-      lo=(st>W?st:W); hi=(en<NOW?en:NOW); # clamp to the session window
-      if (hi>lo) sum+=hi-lo }
-    END { printf "%.3f\n", (sum>0?sum:0)/3600 }'
+# Convert Slurm's local-time Start/End stamps to epoch with `date` (GNU coreutils,
+# already required above) instead of awk's gawk-only mktime(), so the probe also
+# works under mawk. awk is used only for the final float division below, which
+# every awk supports.
+now="$(date +%s)"
+sum=0
+while IFS='|' read -r start end _state; do
+    [ -n "$start" ] || continue
+    case "$start" in Unknown|None) continue ;; esac        # no real start -> skip job
+    st="$(date -d "$start" +%s 2>/dev/null)" || continue
+    [ -n "$st" ] || continue
+    case "$end" in
+        ''|Unknown|None) en="$now" ;;                      # still running -> up to now
+        *) en="$(date -d "$end" +%s 2>/dev/null)"; [ -n "$en" ] || en="$now" ;;
+    esac
+    lo="$start_epoch"; [ "$st" -gt "$lo" ] && lo="$st"     # clamp to the session window
+    hi="$now";         [ "$en" -lt "$hi" ] && hi="$en"
+    [ "$hi" -gt "$lo" ] && sum=$(( sum + hi - lo ))        # concurrent jobs add up
+done <<< "$rows"
+
+awk -v s="$sum" 'BEGIN { printf "%.3f\n", s/3600 }'
