@@ -76,12 +76,19 @@ class ContextCommandsMixin:
         if as_json:
             import json
 
+            from cluster_tunnel.constants import get_version
+
             preamble = config.agent.preamble.strip()
+            version = get_version()
             payloads = [self._info_payload(b) for b in briefings]
             if self.target:
-                click.echo(json.dumps({"preamble": preamble, **payloads[0]}, indent=2))
+                click.echo(json.dumps(
+                    {"ctun_version": version, "preamble": preamble, **payloads[0]}, indent=2
+                ))
             else:
-                click.echo(json.dumps({"preamble": preamble, "clusters": payloads}, indent=2))
+                click.echo(json.dumps(
+                    {"ctun_version": version, "preamble": preamble, "clusters": payloads}, indent=2
+                ))
             return
 
         cons = self.cons

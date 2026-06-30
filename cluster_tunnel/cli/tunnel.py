@@ -156,6 +156,16 @@ class TunnelCommandsMixin:
             spec = ssh.conn_spec(config, name)
             live = ssh.is_live(spec)
             sess = session.load(name)
+            cluster = config.clusters[name]
+
+            # Surface budget unit/limit at the top level (not only nested in the
+            # session) so JSON consumers can always read them. The unit falls
+            # back to the cluster's configured unit; the active limit comes from
+            # the live session (None when unguarded or not logged in).
+            unit = (sess.get("unit") if sess else None) or (
+                cluster.budget.unit if cluster.budget else None
+            )
+            limit = sess.get("limit") if sess else None
 
             # Live budget usage requires a remote probe over the tunnel, so we
             # only run it for an explicitly targeted, guarded, live cluster —
@@ -163,7 +173,6 @@ class TunnelCommandsMixin:
             used: float | None = None
             used_error: str | None = None
             if self.target and live and sess and sess.get("limit") is not None:
-                cluster = config.clusters[name]
                 if cluster.budget:
                     try:
                         config_path = config_mod.resolve_config_path(self.config_path)
@@ -180,8 +189,11 @@ class TunnelCommandsMixin:
             rows.append(
                 {
                     "cluster": name,
+                    "target": spec.target,
                     "live": live,
                     "session": sess,
+                    "limit": limit,
+                    "unit": unit,
                     "commands": cmdlog.summary(name),
                     "used": used,
                     "used_error": used_error,
