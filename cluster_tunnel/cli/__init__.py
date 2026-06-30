@@ -47,12 +47,58 @@ class CLI(
         self.add_command(self.webui_command)
 
 
+def _complete_clusters(ctx: click.Context, param, incomplete: str):
+    """Tab-completion candidates for ``-t/--target``: the configured cluster names.
+
+    Reads whichever config ``-c/--config``/``$CTUN_CONFIG`` resolves to, so the
+    candidates always reflect the user's current clusters. Any error (no/invalid
+    config) yields no candidates rather than breaking completion.
+    """
+    from click.shell_completion import CompletionItem
+
+    from cluster_tunnel import config as config_mod
+
+    try:
+        config = config_mod.load_config(ctx.params.get("config_path"))
+        names = list(config.clusters.keys())
+    except Exception:  # noqa: BLE001 — completion must never raise
+        return []
+    return [CompletionItem(n) for n in names if n.startswith(incomplete)]
+
+
+def _init_completion(ctx: click.Context, param, value):
+    """Eager callback for ``--init-completion <shell>``: print the activation
+    script for that shell and exit (mirrors ``--version``)."""
+    if not value or ctx.resilient_parsing:
+        return
+    from click.shell_completion import get_completion_class
+
+    comp_cls = get_completion_class(value)
+    if comp_cls is None:  # Choice() should prevent this, but be defensive
+        raise click.BadParameter(f"unsupported shell: {value}")
+    comp = comp_cls(ctx.find_root().command, {}, "ctun", "_CTUN_COMPLETE")
+    click.echo(comp.source())
+    ctx.exit()
+
+
 def create_cli():
     """Create and return the root CLI group."""
 
     @click.group(cls=CLI, context_settings={"show_default": True})
     @click.version_option(version=get_version(), message="%(version)s")
-    @click.option("-t", "--target", default=None, help="Cluster to act on (from config).")
+    @click.option(
+        "--init-completion",
+        type=click.Choice(["bash", "zsh", "fish"]),
+        is_eager=True,
+        expose_value=False,
+        callback=_init_completion,
+        help="Print a shell completion script for SHELL (bash|zsh|fish), then exit. "
+        "e.g. `ctun --init-completion bash >> ~/.bashrc`.",
+    )
+    @click.option(
+        "-t", "--target", default=None, help="Cluster to act on (from config).",
+        shell_complete=_complete_clusters,
+    )
     @click.option(
         "-c", "--config", "config_path", default=None, type=click.Path(),
         help="Use an alternate config.yaml.",
