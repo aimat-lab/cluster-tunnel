@@ -11,6 +11,7 @@ workflow and golden rules, see [SKILL.md](SKILL.md).
 - `info` — cluster briefing
 - `login` — authenticate and open the tunnel
 - `run` — run a command through the tunnel
+- `upload` / `download` — transfer files over the tunnel
 - `logs` — commands sent this session
 - `logout` — close the tunnel
 - `config` — manage the config file
@@ -105,6 +106,31 @@ budget to stderr before the command's own output, so it never pollutes stdout.
 ```
 ctun -t haicore run -- squeue --me
 ctun -t haicore run -- bash -c 'cd $WORK && sbatch job.sh'
+```
+
+## `upload` / `download` — transfer files over the tunnel
+
+```
+ctun -t <cluster> upload [-n|--dry-run] <local-src> <remote-dest> [-- <rsync args>]
+ctun -t <cluster> download [-n|--dry-run] <remote-src> <local-dest> [-- <rsync args>]
+```
+
+Move files with **rsync over the live tunnel** — it reuses the authenticated
+master, so there is **no re-authentication** (no password, no OTP).
+
+- `upload` copies local → cluster; `download` copies cluster → local. The
+  direction decides which side is remote, so remote paths are written **bare**
+  (no `host:` prefix); a relative remote path resolves to the remote `$HOME`.
+- Copies **recursively** (`rsync -r`). Trailing slashes follow rsync semantics:
+  `data/` copies the *contents* of `data`, `data` copies the directory itself.
+- **Not** budget-guarded (moving data isn't compute). **Fails closed**: with no
+  live tunnel it exits `10` (`ctun-error: login_required`) instead of prompting.
+- rsync's exit code is propagated. Extra rsync flags go after `--`, e.g.
+  `-- --exclude='*.tmp' -z`, or `-- --info=progress2` for a progress display.
+
+```
+ctun -t haicore upload ./dataset $WORK/dataset       # push a folder
+ctun -t haicore download logs/run42.out ./run42.out  # pull a result file
 ```
 
 ## `logs` — commands sent this session

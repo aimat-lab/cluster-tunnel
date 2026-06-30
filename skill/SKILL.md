@@ -104,6 +104,8 @@ ctun -t haicore run -- squeue --me       # check your queue (safe on login node)
 ctun -t haicore run -- sbatch train.sh   # submit a batch job (budget-checked)
 ctun -t haicore run -- sacct -j 12345    # inspect a finished/running job
 ctun -t haicore run -n -- sbatch big.sh  # -n/--dry-run: show the budget decision, don't submit
+ctun -t haicore upload ./data $WORK/data # copy local -> cluster (rsync, no re-auth)
+ctun -t haicore download out/run.log .   # copy cluster -> local
 ctun -t haicore logs                     # commands sent to this cluster this session
 ctun -t haicore logout                   # close the tunnel, clear the session
 ```
