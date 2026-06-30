@@ -38,9 +38,17 @@ class ConfigCommandsMixin:
 
         if do_validate:
             try:
-                config_mod.load_config(self.config_path)
+                config = config_mod.load_config(self.config_path)
             except Exception as exc:  # noqa: BLE001
                 raise click.ClickException(f"Invalid config: {exc}") from exc
+            warnings = config_mod.validation_warnings(config, path)
+            for warning in warnings:
+                click.secho(f"warning: {warning}", fg="yellow", err=True)
+            if warnings:
+                raise click.ClickException(
+                    f"{path} is structurally valid but has {len(warnings)} "
+                    f"warning(s) — see above."
+                )
             click.echo(f"OK — {path} is valid.")
             return
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 from pathlib import Path
 from typing import Any, Optional
@@ -134,6 +135,43 @@ def budget_script_path(config_path: Path, name: str, script: str | None) -> Path
     rel = script or f"budget/{name}.sh"
     p = Path(rel).expanduser()
     return p if p.is_absolute() else config_path.parent / p
+
+
+def validation_warnings(config: "Config", config_path: Path) -> list[str]:
+    """Advisory (non-structural) problems pydantic can't catch on its own.
+
+    These don't make the config malformed, but each one silently breaks the
+    budget guard at submission time, so ``config --validate`` surfaces them:
+
+    - a cluster's ``budget.script`` doesn't exist on disk (the probe can't be
+      shipped over the tunnel, so the guard fails — and with ``fail_mode:
+      closed`` that blocks every submission);
+    - a ``guard_commands`` entry isn't a valid regex (the matcher falls back to
+      a literal comparison, so the intended pattern never fires).
+
+    Returns a list of human-readable warning strings; empty means all clear.
+    """
+    warnings: list[str] = []
+    for name, cluster in config.clusters.items():
+        budget = cluster.budget
+        if budget is None:
+            continue
+        script = budget_script_path(config_path, name, budget.script)
+        if not script.exists():
+            effect = "blocks" if budget.fail_mode == "closed" else "allows"
+            warnings.append(
+                f"cluster '{name}': budget script not found: {script} — the budget "
+                f"guard will fail, and fail_mode='{budget.fail_mode}' {effect} submissions."
+            )
+        for pattern in budget.guard_commands:
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                warnings.append(
+                    f"cluster '{name}': guard_commands entry {pattern!r} is not a valid "
+                    f"regex ({exc}); it will only match the literal command name."
+                )
+    return warnings
 
 
 def setup_if_necessary(cli_path: str | None = None) -> Path:
