@@ -10,7 +10,7 @@ the live connection with zero re-authentication, and any job submission is check
 against a budget before it reaches the scheduler.
 
 ```console
-$ ctun -t horeka login                 # enter password + OTP once
+$ ctun -t horeka login -i              # interactive login once: password + OTP popup
 $ ctun -t horeka run -- squeue --me     # reuse the live tunnel, no re-auth
 $ ctun -t horeka run -- sbatch train.sh # submitted only if within budget
 $ ctun -t horeka status                 # tunnel state + budget used
@@ -76,7 +76,7 @@ policy allow; when it eventually drops, `run` fails with a clear message and you
 Using [uv](https://docs.astral.sh/uv/) (recommended — installs `ctun` onto your PATH):
 
 ```console
-$ git clone <repo-url> cluster-tunnel
+$ git clone https://github.com/aimat-lab/cluster-tunnel
 $ cd cluster-tunnel
 $ uv tool install .
 $ ctun --help
@@ -114,14 +114,20 @@ clusters:
   horeka:
     host: horeka.scc.kit.edu
     user: ab1234
+    requires_otp: true            # set false for clusters that don't use an OTP
     description: |
       HoreKa @ KIT. GPU jobs go to partition 'accelerated'.
 ```
 
-**3. Log in once** (enter your password + OTP at the prompt):
+> The starter config (`ctun config --init`) already ships several commented
+> example clusters. It's usually easiest to just **uncomment one and fill in your
+> own username** rather than write a block from scratch.
+
+**3. Log in once** — `-i/--interactive` pops up a small window for your password + OTP
+(and works even when `ctun` has no terminal of its own, e.g. when an agent runs it):
 
 ```console
-$ ctun -t horeka login
+$ ctun -t horeka login -i
 Tunnel to 'horeka' established.
 Session budget: unguarded (no limit set).
 ```
@@ -157,19 +163,44 @@ Global options:
 | `-V, --verbose` | Enable debug logging. |
 | `--version` | Print the version. |
 
+### `status` — tunnel and session state
+
+```console
+$ ctun -t horeka status              # one cluster (detailed)
+$ ctun status                        # all configured clusters
+$ ctun -t horeka status -j|--json    # machine-readable
+```
+
+Shows whether the tunnel is live, when the session started, and the budget limit.
+Use it first whenever you lack context.
+
+### `config` — manage the config file
+
+```console
+$ ctun config                  # open in $EDITOR
+$ ctun config -i|--init        # create a starter config if none exists
+$ ctun config -p|--path        # print the config file path
+$ ctun config -s|--show        # print the resolved config
+$ ctun config --validate       # check for errors + warn on missing budget
+                               # scripts / invalid guard_commands regexes
+```
+
 ### `login` — authenticate and open the tunnel
 
 ```console
 $ ctun -t horeka login [-i|--interactive] [-l|--limit N] [--timeout S]
 ```
 
-- Opens the persistent master connection; prompts for your password + OTP.
+- Opens the persistent master connection.
+- `-i, --interactive` **(recommended)** shows a small pop-up window (password + OTP +
+  limit) instead of prompting in the terminal, then feeds the secrets to ssh for you.
+  This is the easiest way to log in, and the only one that works when `ctun` is invoked by
+  a tool that has no terminal of its own (e.g. a coding agent) — a person at the machine
+  fills in the window. The password field may be left blank for clusters that need no
+  password. `--timeout S` bounds how long it waits (default 120s).
+- Plain `ctun -t <cluster> login` (no `-i`) prompts for the password + OTP in the terminal.
 - `-l, --limit N` sets this session's compute budget (overrides the cluster's configured
   `session_limit`).
-- `-i, --interactive` shows a small pop-up window (password + limit) instead of prompting
-  in the terminal, then feeds the password to ssh for you. Useful when `ctun` is invoked by
-  a tool that has no terminal of its own (e.g. a coding agent) — a person at the machine
-  fills in the window. `--timeout S` bounds how long it waits (default 120s).
 
 A **session** lasts for the lifetime of one authentication. Logging in again (after the
 tunnel drops) starts a fresh session and resets the budget window.
@@ -244,16 +275,6 @@ $ ctun -t horeka upload ./dataset $WORK/dataset       # push a folder
 $ ctun -t horeka download logs/run42.out ./run42.out  # pull a result file
 ```
 
-### `status` — tunnel and session state
-
-```console
-$ ctun -t horeka status              # one cluster (detailed)
-$ ctun status                        # all configured clusters
-$ ctun -t horeka status -j|--json    # machine-readable
-```
-
-Shows whether the tunnel is live, when the session started, and the budget limit.
-
 ### `info` — briefing for a cluster
 
 ```console
@@ -276,40 +297,6 @@ target, it logs out every configured cluster.
 To run `ctun logout` **automatically on every logout, reboot, or shutdown**,
 install the systemd user hook in [`systemd/`](./systemd/) (`cd systemd &&
 ./install.sh`). See [systemd/README.md](./systemd/README.md) for details.
-
-### `config` — manage the config file
-
-```console
-$ ctun config                  # open in $EDITOR
-$ ctun config -i|--init        # create a starter config if none exists
-$ ctun config -p|--path        # print the config file path
-$ ctun config -s|--show        # print the resolved config
-$ ctun config --validate       # check for errors + warn on missing budget
-                               # scripts / invalid guard_commands regexes
-```
-
-### Shell completion
-
-`ctun` can complete subcommands, flags, and — dynamically from your config — **cluster
-names after `-t/--target`**. Enable it once per shell with the top-level
-`--init-completion` option (it prints the activation script and exits):
-
-```console
-$ ctun --init-completion bash >> ~/.bashrc          # bash
-$ ctun --init-completion zsh  >> ~/.zshrc           # zsh
-$ ctun --init-completion fish >  ~/.config/fish/completions/ctun.fish   # fish
-```
-
-Restart the shell, then `ctun -t <TAB>` offers the clusters from your `config.yaml`
-(add a cluster and it completes immediately — the candidate list is read live).
-
-### `webui`
-
-```console
-$ ctun webui
-```
-
-Placeholder for a planned local web interface (not yet implemented).
 
 ---
 
@@ -353,12 +340,6 @@ clusters:
       unit: jobh                  # label for display (bundled scripts report job-hours)
       guard_commands: [sbatch, srun, salloc]   # commands subject to the budget check
       fail_mode: closed           # if the budget script errors: "closed" blocks, "open" allows
-
-# Planned web interface settings (currently unused).
-webui:
-  host: 127.0.0.1
-  port: 8765
-  open_browser: true
 ```
 
 **Connecting:** if `ssh_alias` is set, `ctun` uses that `~/.ssh/config` Host entry for the
@@ -391,47 +372,11 @@ session started, counting only the portion of each job inside the session window
 jobs add up). The bundled budget scripts (`ctun config --init` copies them next to your
 config) compute this from `sacct` and work on any cluster with Slurm accounting enabled.
 
-### Writing a budget script
-
-A budget script lives next to your config (e.g.
-`~/.config/cluster-tunnel/budget/horeka.sh`) and runs **on the cluster login node**. It
-receives three arguments and must print **one number** (the usage since the session start)
-to standard output:
-
-| Argument | Value |
-|---|---|
-| `$1` | session start time (UTC epoch seconds) |
-| `$2` | cluster name |
-| `$3` | your username on the cluster |
-
-Example — job wall-clock hours since the session started, via Slurm accounting (this is the
-bundled default; concurrent jobs add up, each clamped to the session window):
-
-Epochs are computed with `date` (GNU coreutils), not awk's gawk-only `mktime()`, so this
-runs under any awk (including mawk, the default on Debian/Ubuntu):
-
-```bash
-#!/usr/bin/env bash
-set -u
-export LC_ALL=C   # locale-independent number formatting (avoid e.g. "2,000")
-start_iso="$(date -d "@$1" +%Y-%m-%dT%H:%M:%S)"
-now="$(date +%s)"; sum=0
-# job-hours = Σ over the user's jobs of time-within-[start, now], from sacct Start/End.
-while IFS='|' read -r s e _; do
-    [ -n "$s" ] || continue
-    st="$(date -d "$s" +%s 2>/dev/null)" || continue
-    case "$e" in ''|Unknown|None) en="$now" ;; *) en="$(date -d "$e" +%s 2>/dev/null)"; [ -n "$en" ] || en="$now" ;; esac
-    lo="$1"; [ "$st" -gt "$lo" ] && lo="$st"        # clamp to the session window
-    hi="$now"; [ "$en" -lt "$hi" ] && hi="$en"
-    [ "$hi" -gt "$lo" ] && sum=$(( sum + hi - lo ))  # concurrent jobs add up
-done <<< "$(sacct -u "$3" -S "$start_iso" -X -n -P -o Start,End,State 2>/dev/null)"
-awk -v s="$sum" 'BEGIN { printf "%.3f\n", s/3600 }'
-```
-
-The unit is whatever your script reports; set `session_limit` and `--limit` in the same
-unit (the bundled scripts report `jobh`). For a different metric — GPU-hours, core-hours,
-node-hours — adapt the script and label `unit` accordingly. If the script exits non-zero,
-`fail_mode` decides what happens (`closed` blocks the submission, `open` allows it).
+You normally don't write a budget script yourself — `ctun config --init` copies the bundled
+ones next to your config. For a different metric (GPU-hours, core-hours, …) adapt a bundled
+script: it runs on the login node, receives `$1` session-start epoch, `$2` cluster, `$3`
+username, and must print a single number. If it exits non-zero, `fail_mode` decides
+(`closed` blocks the submission, `open` allows it). See [DESIGN.md](./DESIGN.md) for details.
 
 Example of the guard in action:
 
