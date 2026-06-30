@@ -44,16 +44,6 @@ command:
 - Every later **`run`** opens a lightweight channel *inside* that already-authenticated
   connection — no password, no OTP, near-instant.
 
-```
-   your machine                                  cluster login node
-  ┌───────────────────────────────┐
-  │  ssh master ───── authenticated connection ─────────►  sshd
-  │     ▲  (idle, persistent)      │   (channels multiplexed over it)
-  │     │ control socket           │
-  │  ctun run ── new channel ──────┼──►  squeue / sbatch / …  (no re-auth)
-  └───────────────────────────────┘
-```
-
 `ctun` itself is **stateless** — it runs once per command and exits. The persistent
 state lives in the background ssh master, a small config file, and a per-cluster
 session record. The connection lives as long as the network and the cluster's session
