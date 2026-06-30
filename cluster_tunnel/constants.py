@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import enum
 import pathlib
 
 #: Absolute path to the bundled VERSION file — the single source of truth for
@@ -31,3 +32,25 @@ DEFAULT_FAIL_MODE = "closed"
 
 #: Order in which to try terminal emulators for `login --interactive`.
 TERMINAL_CANDIDATES = ["gnome-terminal", "xfce4-terminal", "x-terminal-emulator", "xterm"]
+
+
+class ExitCode(enum.IntEnum):
+    """Stable exit codes for ctun's own ``run`` preflight failures.
+
+    These are distinct from the remote command's exit code (propagated as-is,
+    0-255) so an agent can tell *why* ctun stopped without scraping stderr.
+    """
+
+    LOGIN_REQUIRED = 10      #: No live tunnel — the caller must `login` again.
+    BUDGET_EXHAUSTED = 11    #: Guarded command blocked: usage at/over the limit.
+    BUDGET_GUARD_ERROR = 12  #: Guarded command blocked: budget couldn't be verified.
+
+
+#: Machine-readable markers printed to stderr (``ctun-error: <marker>``) alongside
+#: each ExitCode, so agents have an unambiguous signal even if a numeric exit code
+#: happens to collide with a remote command's own code.
+ERROR_MARKERS = {
+    ExitCode.LOGIN_REQUIRED: "login_required",
+    ExitCode.BUDGET_EXHAUSTED: "budget_exhausted",
+    ExitCode.BUDGET_GUARD_ERROR: "budget_guard_error",
+}

@@ -73,6 +73,14 @@ command with `shlex.join`, then hands it to ssh. stdout/stderr are streamed live
 the **remote exit code is propagated** as `ctun`'s exit code. `--tty` (optional) adds
 `-tt` for interactive remote programs.
 
+ctun's *own* pre-flight failures use distinct exit codes (`ExitCode` in `constants.py`)
+so callers — especially agents — can branch on them, and each also prints a stable
+`ctun-error: <marker>` line to stderr: `10`/`login_required` (no live tunnel),
+`11`/`budget_exhausted` (guarded command over the limit), `12`/`budget_guard_error`
+(guarded command blocked because the budget could not be verified, fail-closed). Any other
+exit code is the remote command's own. `--dry-run` exits with the same code it would have
+used, making it a usable pre-flight check.
+
 ### 2.3 What can end a tunnel (and the response)
 
 | Cause | `ctun` behaviour |
@@ -349,7 +357,7 @@ Dependencies: `rich-click`, `rich`, `PyYAML`. (`python-dotenv` optional.)
 | Form factor | CLI prefix tool `ctun`, not an MCP server |
 | Persistence | OpenSSH ControlMaster/ControlPersist; no custom daemon |
 | Cluster selector | group option `-t/--target` |
-| `run` syntax | `--`-only passthrough, exit code propagated |
+| `run` syntax | `--`-only passthrough; remote exit code propagated, ctun failures use codes 10/11/12 + `ctun-error:` markers |
 | Auth | `login` (human) + `login --interactive` (agent → blocking popup) |
 | Dead tunnel | `run` fails closed (BatchMode) |
 | Session | = one authentication's lifetime, per cluster; resets only on re-auth |

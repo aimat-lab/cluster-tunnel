@@ -4,10 +4,29 @@ from __future__ import annotations
 
 import rich_click as click
 
+from cluster_tunnel.cli.errors import emit_marker, fail
+from cluster_tunnel.constants import ExitCode
+
+
+#: Fraction of the session budget at/above which `run` warns before the hard block.
+_NEAR_LIMIT_FRACTION = 0.8
+
 
 def _num(x: float) -> str:
     """Format a budget figure compactly (1 decimal, no trailing .0)."""
     return f"{round(x, 1):g}"
+
+
+def _block_code(decision) -> ExitCode:
+    """Classify a blocked budget decision into its exit code.
+
+    A decision carrying a usage *number* (``used``/``limit`` both set) was blocked
+    because the session is at/over budget; otherwise the budget could not be
+    verified and was fail-closed.
+    """
+    if decision.used is not None and decision.limit is not None:
+        return ExitCode.BUDGET_EXHAUSTED
+    return ExitCode.BUDGET_GUARD_ERROR
 
 
 class ExecutionCommandsMixin:
@@ -35,9 +54,10 @@ class ExecutionCommandsMixin:
         spec = ssh.conn_spec(config, name)
 
         if not ssh.is_live(spec):
-            raise click.ClickException(
+            fail(
                 f"No live tunnel for '{name}'. Run `ctun -t {name} login` "
-                f"(or `ctun -t {name} login --interactive`) first."
+                f"(or `ctun -t {name} login --interactive`) first.",
+                ExitCode.LOGIN_REQUIRED,
             )
 
         tokens = list(command)
@@ -50,6 +70,11 @@ class ExecutionCommandsMixin:
             if decision.used is not None:
                 click.echo(f"  budget: {decision.used} / {decision.limit} {decision.unit}")
             click.echo(f"  reason: {decision.reason}")
+            # Exit with the would-be failure code so `run -n` is a usable preflight.
+            if not decision.allowed:
+                code = _block_code(decision)
+                emit_marker(code)
+                raise SystemExit(int(code))
             return
 
         if not decision.allowed:
@@ -58,29 +83,37 @@ class ExecutionCommandsMixin:
             # fall back to the reason text.
             if decision.used is not None and decision.limit is not None:
                 over = decision.used - decision.limit
-                raise click.ClickException(
+                fail(
                     f"Submission blocked on '{name}': compute budget exhausted.\n"
                     f"  used {_num(decision.used)} / {_num(decision.limit)} {decision.unit} "
                     f"(over by {_num(over)} {decision.unit})\n"
                     f"  '{shlex.join(tokens)}' was NOT submitted.\n"
                     f"  Free budget by cancelling queued jobs, or start a fresh "
-                    f"session with `ctun -t {name} login`."
+                    f"session with `ctun -t {name} login`.",
+                    ExitCode.BUDGET_EXHAUSTED,
                 )
-            raise click.ClickException(
-                f"Submission blocked on '{name}': {decision.reason}. Command not submitted."
+            fail(
+                f"Submission blocked on '{name}': {decision.reason}. Command not submitted.",
+                ExitCode.BUDGET_GUARD_ERROR,
             )
 
         # When a probe actually ran (guarded command + a limit), show remaining
-        # budget in gray before the command's own output. Goes to stderr so it
-        # never mixes into the command's stdout.
+        # budget before the command's own output. Goes to stderr so it never
+        # mixes into the command's stdout. Once usage crosses the near-limit
+        # threshold, switch to a yellow warning so an agent can pace itself
+        # before the hard block — but still let the command run.
         if decision.used is not None and decision.limit is not None:
             remaining = decision.limit - decision.used
-            click.secho(
-                f"budget: {_num(decision.used)} / {_num(decision.limit)} {decision.unit} used"
-                f" · {_num(remaining)} {decision.unit} remaining",
-                fg="bright_black",
-                err=True,
+            base = (
+                f"{_num(decision.used)} / {_num(decision.limit)} {decision.unit} used"
+                f" · {_num(remaining)} {decision.unit} remaining"
             )
+            if decision.limit > 0 and decision.used / decision.limit >= _NEAR_LIMIT_FRACTION:
+                pct = 100 * decision.used / decision.limit
+                click.secho(f"budget: approaching limit — {pct:.0f}% used · {base}",
+                            fg="yellow", err=True)
+            else:
+                click.secho(f"budget: {base}", fg="bright_black", err=True)
 
         # Log the command (not its output) so `status` can show activity.
         cmdlog.record(name, tokens)
