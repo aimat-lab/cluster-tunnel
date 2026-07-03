@@ -1,3 +1,5 @@
+![cluster-tunnel banner](banner.jpg)
+
 # cluster-tunnel (`ctun`)
 
 `ctun` keeps an authenticated SSH connection to an OTP-protected HPC cluster **alive
