@@ -133,6 +133,40 @@ ctun -t haicore upload ./dataset $WORK/dataset       # push a folder
 ctun -t haicore download logs/run42.out ./run42.out  # pull a result file
 ```
 
+### Best practice: archive many small files before transferring
+
+Transferring a tree with many small files (datasets of individual samples,
+Python envs, checkpoints with shards) is slow per-file and hammers the
+cluster's shared filesystem. Bundle it into **one archive**, transfer that, and
+unpack on the other side. Prefer **tar.gz** over zip: it preserves Unix
+permissions and symlinks, and `tar` is always available on clusters (`unzip`
+often isn't).
+
+Local → cluster:
+
+```
+tar czf dataset.tar.gz dataset/                                  # pack locally
+ctun -t haicore upload dataset.tar.gz $WORK/dataset.tar.gz       # one big transfer
+ctun -t haicore run -- bash -c 'cd $WORK && tar xzf dataset.tar.gz && rm dataset.tar.gz'
+```
+
+Cluster → local:
+
+```
+ctun -t haicore run -- bash -c 'cd $WORK && tar czf results.tar.gz results/'
+ctun -t haicore download $WORK/results.tar.gz ./results.tar.gz
+tar xzf results.tar.gz                                           # unpack locally
+```
+
+- Unpack **on the login node is fine** — `tar` is I/O, not compute — but for
+  archives with very many files prefer unpacking into `$WORK`/scratch rather
+  than `$HOME`, which often has tight file-count (inode) quotas.
+- If the user insists on zip, check `unzip` exists first
+  (`ctun -t <cluster> run -- command -v unzip`).
+- For a **single large file** or for **re-syncing** a tree that already exists
+  on the other side, skip the archive — plain `upload`/`download` (rsync)
+  transfers deltas only.
+
 ## `logs` — commands sent this session
 
 ```

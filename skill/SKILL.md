@@ -115,6 +115,10 @@ Tips:
   `--time=01:00:00` pass straight through. Use a remote shell for chained work:
   `ctun -t haicore run -- bash -c 'cd $WORK && sbatch job.sh'`.
 - The command's exit code becomes `ctun`'s exit code, and output streams live.
+- Transferring many small files? Pack them into one `tar.gz`, transfer that,
+  and unpack on the other side (via `ctun run -- tar xzf …` for uploads) — far
+  faster and gentler on the shared filesystem. Details in
+  [reference.md](reference.md).
 - Add `--tty` for interactive remote programs that need a pseudo-terminal.
 - After submitting a job, don't poll `squeue` by hand — set up a live monitor
   that wakes you on state changes and failures: see
@@ -129,5 +133,8 @@ Tips:
 - **Live-monitoring a running job** (get notified the moment it changes state
   or fails, via your `Monitor` tool over the tunnel): see
   [monitoring-jobs.md](monitoring-jobs.md).
+- **Python projects on the cluster** (optional; always use venvs, prefer `uv`,
+  where to put the env, activating it in sbatch scripts): see
+  [python-projects.md](python-projects.md).
 - **How to install this skill** into a project or your personal skills: see
   [README.md](README.md).
