@@ -21,21 +21,22 @@ $ ctun -t horeka logout                 # close the tunnel
 
 ---
 
-## Contents
+## 📚 Contents
 
-- [How it works](#how-it-works)
-- [Requirements](#requirements)
-- [Install](#install)
-- [Quickstart](#quickstart)
-- [Commands](#commands)
-- [Configuration](#configuration)
-- [The compute-budget guard](#the-compute-budget-guard)
-- [Using ctun with coding agents](#using-ctun-with-coding-agents)
-- [Files and locations](#files-and-locations)
+- [How it works](#️-how-it-works)
+- [Requirements](#-requirements)
+- [Install](#-install)
+- [Quickstart](#-quickstart)
+- [Commands](#-commands)
+- [Configuration](#-configuration)
+- [The compute-budget guard](#️-the-compute-budget-guard)
+- [Using ctun with coding agents](#-using-ctun-with-coding-agents)
+- [Files and locations](#-files-and-locations)
+- [Contributing](#-contributing)
 
 ---
 
-## How it works
+## ⚙️ How it works
 
 `ctun` is built on OpenSSH **connection multiplexing** (`ControlMaster` /
 `ControlPersist`). Authentication is a property of the *connection*, not of each
@@ -54,7 +55,7 @@ policy allow; when it eventually drops, `run` fails with a clear message and you
 
 ---
 
-## Requirements
+## 📋 Requirements
 
 - **Linux or macOS** with an **OpenSSH client** (`ssh`) — version 7.x+.
 - **Python ≥ 3.10**.
@@ -63,7 +64,7 @@ policy allow; when it eventually drops, `run` fails with a clear message and you
 
 ---
 
-## Install
+## 📦 Install
 
 Using [uv](https://docs.astral.sh/uv/) (recommended — installs `ctun` onto your PATH):
 
@@ -90,7 +91,7 @@ $ uv run pytest         # run the test suite
 
 ---
 
-## Quickstart
+## 🚀 Quickstart
 
 **1. Create your config:**
 
@@ -141,7 +142,7 @@ $ ctun -t horeka logout
 
 ---
 
-## Commands
+## 🧰 Commands
 
 The cluster is selected with the global **`-t` / `--target`** option, placed **before**
 the subcommand: `ctun -t <cluster> <command> …`.
@@ -292,7 +293,7 @@ install the systemd user hook in [`systemd/`](./systemd/) (`cd systemd &&
 
 ---
 
-## Configuration
+## 🔧 Configuration
 
 Config lives at `~/.config/cluster-tunnel/config.yaml` (override with `$CTUN_CONFIG` or
 `-c/--config`). A fully annotated example:
@@ -342,7 +343,7 @@ never enforced by `ctun` — the only hard enforcement is the budget guard below
 
 ---
 
-## The compute-budget guard
+## 🛡️ The compute-budget guard
 
 The guard limits how much compute a **session** consumes — where a session is the period
 since you last logged in. It is a **threshold** check: once usage reaches the limit, new
@@ -379,7 +380,7 @@ BLOCKED on horeka: session budget exhausted: 503.2 >= 500.0 jobh. Command not su
 
 ---
 
-## Using ctun with coding agents
+## 🤖 Using ctun with coding agents
 
 `ctun` exists so coding agents can drive HPC clusters autonomously. The pattern:
 
@@ -401,7 +402,7 @@ control socket is local to that machine.
 
 ---
 
-## Files and locations
+## 📁 Files and locations
 
 | Path | Purpose |
 |---|---|
@@ -409,6 +410,14 @@ control socket is local to that machine.
 | `~/.config/cluster-tunnel/budget/<cluster>.sh` | Per-cluster budget scripts. |
 | `~/.cache/cluster-tunnel/sockets/<cluster>` | SSH control sockets (the live tunnels). |
 | `~/.cache/cluster-tunnel/sessions/<cluster>.json` | Internal session state (start time, limit). |
+
+---
+
+## 🤝 Contributing
+
+If there is a feature you would like to see, or you run into any issue with the
+program, please [open an issue](https://github.com/aimat-lab/cluster-tunnel/issues/new)
+— feedback of any kind is very welcome.
 
 ---
 
