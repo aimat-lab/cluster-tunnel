@@ -52,6 +52,7 @@ A typical batch script declares its resources up front:
 #SBATCH --partition=accelerated     # use a partition allowed by `ctun info`
 #SBATCH --gres=gpu:1                # request only what you need
 #SBATCH --time=02:00:00             # realistic wall-clock limit
+#SBATCH --signal=TERM@120           # SIGTERM ~120s before the limit — time to checkpoint/clean up
 #SBATCH --output=logs/%x-%j.out
 srun python train.py
 ```
@@ -67,7 +68,7 @@ ctun -t <cluster> run --tty -- srun --partition=accelerated --gres=gpu:1 --time=
 ```
 ctun -t <cluster> run -- squeue --me
 ctun -t <cluster> run -- sacct -j <jobid> --format=JobID,State,Elapsed,MaxRSS
-ctun -t <cluster> run -- scancel <jobid>      # cancel a job you no longer need
+ctun -t <cluster> run -- scancel --full --signal=TERM <jobid>   # graceful cancel — SIGTERM, let it clean up
 ```
 
 ## Be a considerate tenant
@@ -76,6 +77,19 @@ ctun -t <cluster> run -- scancel <jobid>      # cancel a job you no longer need
   open while thinking; submit a batch job or release the allocation.
 - **Use scratch/work areas correctly** and clean up large outputs you no longer
   need. Don't fill shared storage.
+- **Look before you delete a directory.** Removing one file is low-risk;
+  `rm -rf` on a *directory* — or "cleaning up" a scratch/output area — is not.
+  `ls` the target first and confirm everything in it is yours and meant to go:
+  shared scratch and run-output dirs routinely hold other people's data, or an
+  earlier run's results you didn't create. When unsure, delete the specific
+  files you made, never the enclosing directory.
+- **Terminate jobs gracefully — don't hard-kill them.** Prefer a soft signal
+  (`scancel --full --signal=TERM <jobid>`) and give jobs lead time to shut down
+  (`#SBATCH --signal=TERM@<seconds>`). A hard SIGKILL on a job doing
+  multiprocessing, distributed training, or heavy I/O can orphan child processes
+  or leave cleanup half-done, which can **drain the node** for everyone. Set the
+  lead time to cover your job's cleanup/checkpoint needs — the default ~30s is
+  often too short.
 - **Honor the advisory restrictions** from `ctun -t <cluster> info` (allowed
   partitions, max runtime, max GPUs). `ctun` does not enforce these — you do.
 
