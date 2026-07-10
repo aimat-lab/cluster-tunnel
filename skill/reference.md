@@ -60,7 +60,7 @@ ctun -t <cluster> info -j    # JSON
 ```
 
 Prints the agent briefing: description, connection details (host, user, whether
-**OTP** is required), advisory **restrictions** (partitions, runtime, GPU
+a **password** and/or **OTP** is required), advisory **restrictions** (partitions, runtime, GPU
 caps), and the **budget** (used vs limit, unit, the guarded commands, the
 fail-mode, and the path of the budget script). Works even without a live
 tunnel. Read this before submitting jobs.
@@ -204,6 +204,7 @@ clusters:
     host: haicore.scc.kit.edu
     user: ab1234
     requires_otp: true
+    requires_password: true     # optional (default true); false = OTP/key only, no password
     description: |
       HAICORE @ KIT. GPU jobs via Slurm.
     restrictions:               # advisory only — shown by `info`, never enforced

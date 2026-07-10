@@ -30,6 +30,12 @@ def test_resolve_target_variants() -> None:
     assert cfg.resolve_target(Cluster(host="h")) == "h"
 
 
+def test_requires_password_defaults_true_and_overridable() -> None:
+    # Default: a cluster uses a service password unless told otherwise.
+    assert Cluster(host="h").requires_password is True
+    assert Cluster(host="h", requires_password=False).requires_password is False
+
+
 def test_budget_script_path(tmp_path: Path) -> None:
     cp = tmp_path / "config.yaml"
     assert cfg.budget_script_path(cp, "horeka", None) == tmp_path / "budget" / "horeka.sh"

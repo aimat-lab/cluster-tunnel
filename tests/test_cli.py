@@ -30,9 +30,12 @@ def test_help() -> None:
 
 
 def test_version() -> None:
+    from cluster_tunnel.constants import get_version
+
     r = CliRunner().invoke(cli, ["--version"])
     assert r.exit_code == 0
-    assert "0.1.0" in r.output
+    # Assert against the packaged version so this never drifts on a bump.
+    assert get_version() in r.output
 
 
 def test_run_requires_command(tmp_path: Path, monkeypatch) -> None:
@@ -47,6 +50,32 @@ def test_info_without_target_lists_all(tmp_path: Path, monkeypatch) -> None:
     r = CliRunner().invoke(cli, ["info"])
     assert r.exit_code == 0
     assert "localhost" in _norm(r)
+
+
+def test_info_shows_password_required(tmp_path: Path, monkeypatch) -> None:
+    p = tmp_path / "config.yaml"
+    p.write_text(
+        "clusters:\n"
+        "  otponly:\n"
+        "    host: h.example\n"
+        "    requires_otp: true\n"
+        "    requires_password: false\n"
+    )
+    monkeypatch.setenv("CTUN_CONFIG", str(p))
+    r = CliRunner().invoke(cli, ["-t", "otponly", "info"])
+    assert r.exit_code == 0
+    out = _norm(r)
+    assert "Password required" in out
+
+
+def test_info_json_includes_requires_password(tmp_path: Path, monkeypatch) -> None:
+    import json
+
+    _cfg(tmp_path, monkeypatch)  # localhost cluster, defaults -> requires_password true
+    r = CliRunner().invoke(cli, ["-t", "localhost", "info", "--json"])
+    assert r.exit_code == 0
+    data = json.loads(r.output)
+    assert data["requires_password"] is True
 
 
 def test_unknown_cluster(tmp_path: Path, monkeypatch) -> None:

@@ -46,6 +46,10 @@ clusters:
   #   host: haicore.scc.kit.edu
   #   user: ab1234
   #   requires_otp: true
+  #   requires_password: true        # optional (default true). Set false for a
+  #                                  # cluster that authenticates with OTP and/or
+  #                                  # an SSH key but no service password — the
+  #                                  # login popup then omits the password field.
   #   budget:                        # omit / leave session_limit unset to run unguarded
   #     script: budget/haicore.sh    # bundled; job wall-clock hours since session start
   #     session_limit: 200           # max job-hours per session (or pass `ctun login -l N`)

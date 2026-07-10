@@ -143,6 +143,7 @@ class ContextCommandsMixin:
             "ssh_alias": cluster.ssh_alias,
             "user": cluster.user,
             "requires_otp": cluster.requires_otp,
+            "requires_password": cluster.requires_password,
             "live": live,
             "sess": sess,
             "used": used,
@@ -166,6 +167,7 @@ class ContextCommandsMixin:
             "ssh_alias": b["ssh_alias"],
             "user": b["user"],
             "requires_otp": b["requires_otp"],
+            "requires_password": b["requires_password"],
             "restrictions": cluster.restrictions,
             "tunnel_live": b["live"],
             "session": b["sess"],
@@ -203,6 +205,11 @@ class ContextCommandsMixin:
         else:
             otp = "[red]✗ false[/red]"
         body.append(f"  OTP required: {otp}")
+        if b["requires_password"]:
+            pw = "[green]✓ true[/green]"
+        else:
+            pw = "[red]✗ false[/red]"
+        body.append(f"  Password required: {pw}")
 
         if cluster.restrictions:
             if body:

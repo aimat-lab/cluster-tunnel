@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `requires_password` per-cluster config flag (default `true`, so existing
+  configs are unchanged). Set it to `false` for a cluster that authenticates
+  with an OTP and/or SSH key but **no service password**: the interactive login
+  popup then omits the password field entirely and no password prompt is
+  answered — mirroring how `requires_otp: false` hides the OTP field. When
+  `true`, the popup now requires a non-empty password before it submits. The
+  flag is surfaced in `ctun info` as `Password required: ✓/✗` (and as
+  `requires_password` in the `--json` output).
+
 ## [0.2.0] - 2026-07-03
 
 ### Added

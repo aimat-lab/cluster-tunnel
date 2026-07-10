@@ -52,7 +52,7 @@ def test_prompt_parses_blank_password(monkeypatch) -> None:
     assert creds.otp == "123456"
 
 
-def test_prompt_forwards_requires_otp_flag(monkeypatch) -> None:
+def test_prompt_forwards_auth_flags(monkeypatch) -> None:
     captured: dict = {}
 
     def fake_run(args, **k):
@@ -62,11 +62,12 @@ def test_prompt_forwards_requires_otp_flag(monkeypatch) -> None:
     monkeypatch.setattr(popup, "_dialog_python", lambda: "/usr/bin/python3")
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    popup.prompt_credentials("k", "u@h", None, "units", requires_otp=False)
-    assert captured["args"][-1] == "0"
+    # The dialog args end with [..., requires_otp, requires_password].
+    popup.prompt_credentials("k", "u@h", None, "units", requires_otp=False, requires_password=True)
+    assert captured["args"][-2:] == ["0", "1"]
 
-    popup.prompt_credentials("k", "u@h", None, "units", requires_otp=True)
-    assert captured["args"][-1] == "1"
+    popup.prompt_credentials("k", "u@h", None, "units", requires_otp=True, requires_password=False)
+    assert captured["args"][-2:] == ["1", "0"]
 
 
 def test_classify_prompt() -> None:
