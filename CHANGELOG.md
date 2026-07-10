@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-10
+
 ### Added
 
 - `requires_password` per-cluster config flag (default `true`, so existing
@@ -17,6 +19,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `true`, the popup now requires a non-empty password before it submits. The
   flag is surfaced in `ctun info` as `Password required: ✓/✗` (and as
   `requires_password` in the `--json` output).
+- `CLAUDE.md`: repository guide for coding agents (project overview, file map,
+  config schema, and the release process).
+
+### Changed
+
+- Skill guidance: reading `ctun -t <cluster> info` is now a firm per-cluster
+  gate — an agent reads a cluster's briefing (description + advisory
+  restrictions) before its first action on that cluster, every session, not
+  only before submitting jobs.
+- Skill etiquette (`cluster-etiquette.md`): safer directory-deletion practice
+  and graceful shutdown/cancellation guidance for cleanup-heavy jobs.
 
 ## [0.2.0] - 2026-07-03
 
