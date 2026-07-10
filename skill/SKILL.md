@@ -40,16 +40,21 @@ ctun -t haicore run -- squeue --me            # everything after `--` runs verba
 ctun status 2>/dev/null || uv run ctun status 2>/dev/null || echo "(ctun unavailable — install it or run 'uv run ctun' from the cluster-tunnel repo)"
 ```
 
-## Startup workflow — do this when you have no cluster context yet
+## Startup workflow — run this before working with any cluster
 
 1. **Check status first.** Read the status snapshot above (or run
    `ctun status`). It lists every configured cluster and whether its tunnel is
    `live` or `down`. Never assume a tunnel is up.
 
-2. **Read the briefing for the cluster(s) you'll use.** Run
-   `ctun -t <cluster> info`. It prints the cluster description, advisory
-   restrictions (partitions, max runtime, GPU caps), and the compute budget
-   (limit, unit, which commands are guarded). Read it **before submitting jobs**.
+2. **Read the briefing before you touch a cluster — every cluster, every
+   session.** The first time you work with a given cluster, and before any
+   `login` or `run` against it, run `ctun -t <cluster> info` and read it. This
+   is how that cluster's specific context reaches you: it prints the cluster
+   **description**, advisory restrictions (partitions, max runtime, GPU caps),
+   and the compute budget (limit, unit, which commands are guarded). This is not
+   optional and not just for job submission — do it even for read-only work like
+   `squeue`, and even if the tunnel is already `live`. If you switch to a second
+   cluster later in the session, run its `info` before touching it too.
 
 3. **Bring up the tunnels you need via interactive login.** For any cluster
    that is `down` and that the task needs, run:
@@ -81,6 +86,9 @@ These are not optional — violating them harms a shared academic machine. See
 [cluster-etiquette.md](cluster-etiquette.md) for the full reasoning, Slurm
 patterns, and the budget guard explained.
 
+- **Read `ctun -t <cluster> info` before your first action on a cluster.** Its
+  description and restrictions are the cluster's specific context — you cannot
+  work correctly without them. See the startup workflow above.
 - **Never run real compute on a login node.** Anything using real CPU/GPU/RAM
   or running more than a few seconds **must** go through Slurm (`sbatch`,
   `srun`, `salloc`). No `python train.py` on the login node. The explicit
