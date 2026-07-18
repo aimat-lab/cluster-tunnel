@@ -8,6 +8,7 @@ environments, managing data). For the command syntax, see [reference.md](referen
 
 - The login node is not a workstation
 - Submitting work through Slurm
+- Moving code and data
 - Be a considerate tenant
 - The compute-budget guard
 - When the tunnel drops
@@ -70,6 +71,42 @@ ctun -t <cluster> run -- squeue --me
 ctun -t <cluster> run -- sacct -j <jobid> --format=JobID,State,Elapsed,MaxRSS
 ctun -t <cluster> run -- scancel --full --signal=TERM <jobid>   # graceful cancel — SIGTERM, let it clean up
 ```
+
+## Moving code and data
+
+Two tools for two kinds of content — pick by *what* you're moving, not by habit.
+
+**Code → git, whenever possible.** Sync source by committing and pushing from
+your machine, then pulling on the cluster (the login node's `git` is fine to
+use):
+
+```
+ctun -t <cluster> run -- bash -c 'cd $WORK/myproject && git pull'
+```
+
+Git moves only the changed lines, never re-uploads unchanged files, records
+exactly what ran, and keeps the local and cluster copies honestly in sync (no
+guessing which file is newer). Prefer it for anything you'd commit: scripts,
+configs, source, small text assets.
+
+**Large files and assets → `upload` / `download`.** Datasets, model
+checkpoints/weights, images, archives, and run outputs do **not** belong in git
+(they bloat the repo and blow past size limits). Move them with the built-in
+transfer commands, which rsync over the live tunnel — incremental, resumable, no
+re-auth:
+
+```
+ctun -t <cluster> upload ./dataset.tar.gz $WORK/dataset.tar.gz     # push data in
+ctun -t <cluster> download $WORK/results.tar.gz ./results.tar.gz   # pull results out
+```
+
+(For many small files, archive first — see the transfer notes in
+[reference.md](reference.md).)
+
+**Rule of thumb:** if you'd `git commit` it, sync it with git; if it's a big
+binary or a generated artifact, use `upload`/`download`. Keep the two separate —
+a `.gitignore` that excludes data/checkpoint dirs keeps large files out of the
+repo and the repo out of your transfers.
 
 ## Be a considerate tenant
 

@@ -155,6 +155,28 @@ def close(spec: ConnSpec) -> bool:
     return res.returncode == 0
 
 
+def feed_script(
+    spec: ConnSpec, script_path: Path, args: list[object]
+) -> subprocess.CompletedProcess:
+    """Ship a local script over the tunnel and run it via `bash -s -- <args>`.
+
+    The script is streamed on stdin (never written to the remote) and its
+    positional ``args`` are shell-quoted, so nothing installed on the cluster is
+    required beyond ``bash``. stdout/stderr are captured for the caller to
+    interpret. This is the shared transport for every ctun probe (budget usage,
+    job overview, ...).
+    """
+    quoted = " ".join(shlex.quote(str(a)) for a in args)
+    remote = f"bash -s -- {quoted}" if quoted else "bash -s"
+    with open(script_path, "rb") as fh:
+        return subprocess.run(
+            ["ssh", *_socket_opts(spec), "-o", "BatchMode=yes", spec.target, remote],
+            stdin=fh,
+            capture_output=True,
+            text=True,
+        )
+
+
 def probe(
     spec: ConnSpec, script_path: Path, start_epoch: int, user: str
 ) -> subprocess.CompletedProcess:
@@ -163,13 +185,4 @@ def probe(
     Passes positional args ``<start_epoch> <cluster> <user>`` to the script and
     captures its stdout/stderr. The caller interprets the result.
     """
-    remote = "bash -s -- {} {} {}".format(
-        shlex.quote(str(start_epoch)), shlex.quote(spec.name), shlex.quote(user)
-    )
-    with open(script_path, "rb") as fh:
-        return subprocess.run(
-            ["ssh", *_socket_opts(spec), "-o", "BatchMode=yes", spec.target, remote],
-            stdin=fh,
-            capture_output=True,
-            text=True,
-        )
+    return feed_script(spec, script_path, [start_epoch, spec.name, user])

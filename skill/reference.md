@@ -8,6 +8,7 @@ workflow and golden rules, see [SKILL.md](SKILL.md).
 
 - Invocation shape and global options
 - `status` — tunnel + session state
+- `jobs` — Slurm job overview
 - `info` — cluster briefing
 - `login` — authenticate and open the tunnel
 - `run` — run a command through the tunnel
@@ -50,6 +51,30 @@ budget **used** (only probed for an explicitly targeted, live, guarded
 cluster — never for the all-clusters overview, to avoid slow remote probes),
 command count, and the time of the last command. Use this first whenever you
 lack context.
+
+## `jobs` — Slurm job overview
+
+```
+ctun jobs                    # all clusters with a live tunnel
+ctun -t <cluster> jobs       # one cluster
+ctun jobs --since 6h         # widen/narrow the finished-job window (default 24h)
+ctun jobs --since 0          # live queue only (no finished jobs)
+ctun -t <cluster> jobs -j    # machine-readable JSON
+```
+
+A quick overview of **your** jobs — running and pending (from `squeue`), plus
+jobs that **finished recently** (from `sacct`, within `-s/--since`, default
+`24h`; `--since 0` skips them). Without `-t` it sweeps every configured cluster
+and reports each one that has a live tunnel — down clusters are noted, never
+logged in to. Each cluster gets its own table: job ID, name, state, elapsed,
+time limit, partition, nodes — active jobs first, then finished newest-first.
+
+This is read-only (a bundled probe runs `squeue`/`sacct` on the login node over
+the tunnel), so it is **never budget-guarded**. It is the fast way to answer
+"what's running / what just happened" across clusters; for a live, updating view
+of a *single* job as it changes state, use `Monitor` (see
+[monitoring-jobs.md](monitoring-jobs.md)). Equivalent to
+`run -- squeue --me` + `run -- sacct`, but formatted and multi-cluster.
 
 ## `info` — cluster briefing
 

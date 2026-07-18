@@ -262,6 +262,77 @@ def test_status_json_always_includes_target_unit_limit(tmp_path: Path, monkeypat
     assert row["limit"] is None    # no active session
 
 
+# --- jobs overview -------------------------------------------------------------
+
+
+def _patch_jobs(monkeypatch, *, live=True, jobs=None, error=None) -> None:
+    """Isolate `jobs` from real ssh: stub conn_spec/is_live and jobs.query."""
+    monkeypatch.setattr("cluster_tunnel.ssh.conn_spec", lambda config, name: object())
+    monkeypatch.setattr("cluster_tunnel.ssh.is_live", lambda spec: live)
+
+    def fake_query(spec, user, since_minutes):
+        if error is not None:
+            raise RuntimeError(error)
+        return jobs or []
+
+    monkeypatch.setattr("cluster_tunnel.jobs.query", fake_query)
+
+
+def test_jobs_renders_table(tmp_path: Path, monkeypatch) -> None:
+    from cluster_tunnel.jobs import Job
+
+    _cfg(tmp_path, monkeypatch)
+    _patch_jobs(monkeypatch, jobs=[
+        Job("active", "966737", "RUNNING", "14:44", "7:00:00", "booster", "1", "train.sh"),
+    ])
+    r = CliRunner().invoke(cli, ["-t", "localhost", "jobs"])
+    assert r.exit_code == 0
+    out = _norm(r)
+    assert "966737" in out and "RUNNING" in out
+
+
+def test_jobs_notes_down_tunnel(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    _patch_jobs(monkeypatch, live=False)
+    r = CliRunner().invoke(cli, ["-t", "localhost", "jobs"])
+    assert r.exit_code == 0
+    assert "tunnel down" in _norm(r)
+
+
+def test_jobs_json_shape(tmp_path: Path, monkeypatch) -> None:
+    import json
+
+    from cluster_tunnel.jobs import Job
+
+    _cfg(tmp_path, monkeypatch)
+    _patch_jobs(monkeypatch, jobs=[
+        Job("done", "960652", "CANCELLED by 30927", "01:56:26", "07:00:00", "booster", "1", "r.sh"),
+    ])
+    r = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "--since", "2h", "--json"])
+    assert r.exit_code == 0
+    payload = json.loads(r.output)
+    assert payload["since_minutes"] == 120
+    assert payload["clusters"][0]["cluster"] == "localhost"
+    job = payload["clusters"][0]["jobs"][0]
+    assert job["jobid"] == "960652"
+    assert job["state"] == "CANCELLED by 30927"  # full raw state kept in JSON
+
+
+def test_jobs_query_error_is_surfaced_not_fatal(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    _patch_jobs(monkeypatch, error="squeue not found")
+    r = CliRunner().invoke(cli, ["-t", "localhost", "jobs"])
+    assert r.exit_code == 0
+    assert "could not query jobs" in _norm(r)
+
+
+def test_jobs_rejects_bad_since(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    r = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "--since", "bogus"])
+    assert r.exit_code != 0
+    assert "invalid duration" in _norm(r)
+
+
 # --- run exit codes ------------------------------------------------------------
 # `run` gives its own preflight failures stable exit codes + a `ctun-error:` marker,
 # while still propagating the remote command's exit code unchanged.

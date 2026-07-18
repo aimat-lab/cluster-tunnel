@@ -5,7 +5,29 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2026-07-18
+
+### Added
+
+- `jobs` command (in the **Tunnel** group): a cross-cluster overview of *your*
+  Slurm jobs. With `-t <cluster>` it reports one cluster; without a target it
+  sweeps every configured cluster and reports each with a live tunnel (down ones
+  are noted, never logged in to). For each live cluster a bundled, universal
+  probe (`scripts/jobs.sh`, shipped over the tunnel via `bash -s` — nothing to
+  install on the cluster) runs `squeue` for your running + pending jobs and, by
+  default, `sacct` for jobs that finished within a window (`-s/--since`, default
+  `24h`; `--since 0` shows the live queue only). Each job is rendered in a
+  per-cluster table (job ID, name, state, elapsed, time limit, partition,
+  nodes), active jobs first, then finished newest-first. Read-only, so it is
+  **not** budget-guarded; `-j/--json` gives machine-readable output.
+
+### Changed
+
+- Skill etiquette (`cluster-etiquette.md`): new **"Moving code and data"**
+  guidance — sync **code with git** whenever possible (versioned, incremental,
+  keeps both copies in sync), and move **large files and assets** (datasets,
+  checkpoints, archives, run outputs) with the built-in `upload`/`download`
+  transfer commands rather than committing them to the repo.
 
 ## [0.3.0] - 2026-07-10
 
