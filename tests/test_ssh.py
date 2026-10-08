@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -157,3 +158,30 @@ def test_check_timeout_reads_as_not_live(tmp_path: Path, monkeypatch) -> None:
     assert ssh.check(spec).returncode == 124
     assert not ssh.is_live(spec)
 
+
+def test_windows_open_master_starts_ssh_with_sighup_ignored(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(wsl, "enabled", lambda: True)
+    monkeypatch.setattr(ssh, "prepare_socket", lambda spec: None)
+    spec = ssh.conn_spec(_config(tmp_path, "clusters:\n  k:\n    host: hh\n"), "k")
+    captured: dict = {}
+
+    def fake_run(argv, *a, **k):
+        captured["argv"] = argv
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert ssh.open_master(spec) == 0
+    argv = captured["argv"]
+    assert argv[:6] == ["wsl.exe", "-e", "sh", "-c", 'trap "" HUP; exec "$@"', "sh"]
+    assert argv[6:] == ssh.open_master_argv(spec)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX sh")
+def test_sighup_wrapper_survives_exec() -> None:
+    # The program exec'd by the wrapper starts with SIGHUP ignored.
+    probe = "import signal; print(signal.getsignal(signal.SIGHUP) == signal.SIG_IGN)"
+    res = subprocess.run(
+        ["sh", "-c", 'trap "" HUP; exec "$@"', "sh", sys.executable, "-c", probe],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    assert res.stdout.strip() == "True", res.stderr

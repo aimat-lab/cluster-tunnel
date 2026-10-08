@@ -138,7 +138,7 @@ def test_login_runs_driver_in_process_off_windows(monkeypatch) -> None:
     _stub_ssh(monkeypatch, ["ssh", "-M"], ["ssh", "-O", "check"])
     monkeypatch.setattr(pty_login, "login", lambda *a: calls.append(a) or (True, b""))
     assert popup.login_with_password(_spec(), "pw", "123", timeout=5)
-    assert calls == [(["ssh", "-M"], ["ssh", "-O", "check"], "pw", "123", 5)]
+    assert calls == [(["ssh", "-M"], ["ssh", "-O", "check"], "pw", "123", 5, 0)]
 
 
 def test_windows_login_streams_driver_with_secrets_off_argv(monkeypatch) -> None:

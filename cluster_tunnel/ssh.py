@@ -174,7 +174,13 @@ def open_master(spec: ConnSpec, verbose: int = 0) -> int:
     ``verbose`` > 0, ssh's diagnostics stream straight to the current terminal.
     """
     prepare_socket(spec)
-    return subprocess.run(wsl.launch(open_master_argv(spec, verbose), spec.wsl_distro)).returncode
+    argv = open_master_argv(spec, verbose)
+    if wsl.enabled():
+        # wsl.exe makes ssh the session leader of a pty. When `ssh -f` backgrounds
+        # itself, the exiting parent's hangup can kill the new master before it
+        # leaves the session (see pty_login), so start ssh with SIGHUP ignored.
+        argv = ["sh", "-c", 'trap "" HUP; exec "$@"', "sh", *argv]
+    return subprocess.run(wsl.launch(argv, spec.wsl_distro)).returncode
 
 
 def _captured(

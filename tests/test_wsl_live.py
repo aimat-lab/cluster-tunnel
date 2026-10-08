@@ -69,6 +69,6 @@ def test_login_driver_runs_inside_wsl() -> None:
     check = ["test", "-e", marker]
     spec = ConnSpec("k", "u@h", PurePosixPath("~/x/k"), "12h", 60, 3, None, wsl_distro=DISTRO)
     try:
-        assert popup._login_in_wsl(spec, master, check, "s3cret", "123456", 30, 1)
+        assert popup._login_in_wsl(spec, master, check, "s3cret", "123456", 30, 0)
     finally:
         wsl.run(["rm", "-f", marker], DISTRO)

@@ -39,8 +39,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A missing `ssh` (or `wsl.exe`) now reads as "tunnel down" instead of a
   traceback, and `ssh -O check`/`-O exit` give up after 60 seconds.
 
+### Security
+
+- The login dialog and its Tk probe now run Python in isolated mode (`-I`).
+  Before, the working directory (typically the agent's project) was on
+  `sys.path`, so a planted module such as `json.py` could run inside the
+  process that receives the password and OTP.
+
 ### Fixed
 
+- `login --interactive` could lose the tunnel right after a successful login
+  (4 of 25 attempts in a local test). When `ssh -f` backgrounds itself, its
+  exiting parent hangs up the pty, and that SIGHUP could kill the new master
+  before it left the session. ssh now starts with SIGHUP ignored; on Windows
+  the same applies to plain `login`, since `wsl.exe` also gives ssh a pty.
+- `login --interactive` no longer answers a banner or status line that merely
+  mentions "password" or "OTP": only the unfinished last line counts as a
+  prompt, once the output pauses (a line arriving in pieces is read whole
+  first). With `-v`, ssh's debug output now goes to a log file (shown when the
+  login fails) instead of the pty, where its lines were taken for prompts, so
+  `login -i -v` works.
+- A rejected password or OTP (ssh asks again) now ends `login --interactive`
+  at once instead of after `--timeout` (120 s by default).
 - `ctun --help` (and anything else that prints the logo) no longer crashes with
   `UnicodeEncodeError` when stdout uses a legacy code page, as a piped stdout
   does on Windows (cp1252). The `ctun` console script now points at

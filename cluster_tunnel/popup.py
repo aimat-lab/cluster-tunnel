@@ -177,7 +177,7 @@ def _dialog_python() -> Optional[str]:
     """First interpreter whose Tk actually renders on this display."""
     for py in _candidate_pythons():
         try:
-            res = subprocess.run([py, "-c", _RENDER_PROBE], capture_output=True, timeout=10)
+            res = subprocess.run([py, "-I", "-c", _RENDER_PROBE], capture_output=True, timeout=10)
             if res.returncode == 0:
                 return py
         except Exception:
@@ -217,8 +217,11 @@ def prompt_credentials(
     py = _dialog_python()
     if py is None:
         return None
+    # -I (isolated): the working directory is not on sys.path, so a module planted
+    # there (json.py, tkinter.py, ...) can't run in the process holding the secrets.
     args = [
         py,
+        "-I",
         "-c",
         _DIALOG_SCRIPT,
         cluster_name,
@@ -264,7 +267,7 @@ def login_with_password(
     if wsl.enabled():
         return _login_in_wsl(spec, master, check, password, otp, timeout, verbose)
 
-    live, transcript = pty_login.login(master, check, password, otp, timeout)
+    live, transcript = pty_login.login(master, check, password, otp, timeout, verbose)
     if not live and verbose and transcript:
         sys.stderr.write(transcript.decode("utf-8", "replace"))
     return live
