@@ -39,6 +39,7 @@ include = ["cluster_tunnel", "cluster_tunnel.*"]
 # where it is cp1252 rather than UTF-8. Python only emits EncodingWarning when
 # PYTHONWARNDEFAULTENCODING=1 (set in CI); ctun's own modules then fail on it.
 filterwarnings = ["error::EncodingWarning:cluster_tunnel"]
+markers = ["real_wsl: runs with the real wsl.enabled() and wsl.exe lookup (see tests/conftest.py)"]
 
 # Version bumping — keeps pyproject.toml and cluster_tunnel/VERSION in sync.
 # Run e.g. `uv run bump-my-version bump patch` (or minor/major).

@@ -470,3 +470,63 @@ def test_run_no_warning_when_well_under_budget(tmp_path: Path, monkeypatch) -> N
     out = _norm(r)
     assert "approaching limit" not in out
     assert "10 / 100 jobh used" in out
+
+
+# --- Windows (WSL bridge) ----------------------------------------------------------
+
+
+def test_windows_login_stops_on_preflight_problems(tmp_path: Path, monkeypatch) -> None:
+    from cluster_tunnel import wsl
+
+    _cfg(tmp_path, monkeypatch)
+    monkeypatch.setattr(wsl, "enabled", lambda: True)
+    problems = ["WSL distro 'Debian' lacks rsync; install inside WSL."]
+    monkeypatch.setattr(wsl, "preflight", lambda distro=None: wsl.Preflight("Debian", problems))
+    r = CliRunner().invoke(cli, ["-t", "localhost", "login"])
+    assert r.exit_code == 1
+    assert "'Debian' lacks rsync" in _norm(r)
+
+
+def test_windows_login_names_the_wsl_distro(tmp_path: Path, monkeypatch) -> None:
+    from cluster_tunnel import paths, ssh, wsl
+
+    _cfg(tmp_path, monkeypatch)
+    monkeypatch.setattr(paths, "cache_dir", lambda: tmp_path / "cache")
+    monkeypatch.setattr(wsl, "enabled", lambda: True)
+    monkeypatch.setattr(wsl, "preflight", lambda distro=None: wsl.Preflight("Ubuntu-24.04"))
+    live = iter([False, True])
+    monkeypatch.setattr(ssh, "is_live", lambda spec: next(live))
+    monkeypatch.setattr(ssh, "open_master", lambda spec, verbose=0: 0)
+    r = CliRunner().invoke(cli, ["-t", "localhost", "login"])
+    assert r.exit_code == 0, r.output
+    assert "WSL distro Ubuntu-24.04" in _norm(r)
+
+
+def test_main_asks_wsl_for_utf8_on_windows(monkeypatch) -> None:
+    import os
+
+    import cluster_tunnel.cli as cli_pkg
+    from cluster_tunnel import wsl
+
+    monkeypatch.setenv("WSL_UTF8", "0")
+    monkeypatch.delenv("WSL_UTF8")  # absent now, and restored after the test
+    monkeypatch.setattr(wsl, "enabled", lambda: True)
+    monkeypatch.setattr(cli_pkg, "_utf8_console", lambda: None)
+    monkeypatch.setattr(cli_pkg, "cli", lambda: None)
+    cli_pkg.main()
+    assert os.environ["WSL_UTF8"] == "1"
+
+
+def test_transfer_reports_wsl_path_errors(tmp_path: Path, monkeypatch) -> None:
+    from cluster_tunnel import wsl
+
+    _cfg(tmp_path, monkeypatch)
+    monkeypatch.setattr("cluster_tunnel.ssh.is_live", lambda spec: True)
+
+    def fail_translation(*args, **kwargs):
+        raise wsl.WslError("cannot translate 'Z:\\x' to a WSL path: no such drive")
+
+    monkeypatch.setattr("cluster_tunnel.transfer.run_transfer", fail_translation)
+    r = CliRunner().invoke(cli, ["-t", "localhost", "upload", "Z:\\x", "data"])
+    assert r.exit_code == 1
+    assert "cannot translate" in _norm(r)

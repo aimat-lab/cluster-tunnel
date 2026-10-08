@@ -4,7 +4,8 @@ Transfers ride the existing SSH master via its control socket (see
 ``ssh.control_opts``), so they need no re-authentication. The actual transfer
 tool sits behind a small :class:`TransferBackend` abstraction: today only rsync
 is implemented, but a scp/sftp fallback can be added later by registering
-another backend — the CLI never has to change.
+another backend — the CLI never has to change. On Windows rsync runs inside
+WSL, next to the master it rides.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ import subprocess
 from abc import ABC, abstractmethod
 from typing import Literal, Sequence
 
-from cluster_tunnel import ssh
+from cluster_tunnel import ssh, wsl
 from cluster_tunnel.ssh import ConnSpec
 
 Direction = Literal["upload", "download"]
@@ -95,8 +96,17 @@ def run_transfer(
     extra: Sequence[str] = (),
     backend: str = "rsync",
 ) -> int:
-    """Run a transfer over the tunnel, streaming output; return the tool's exit code."""
+    """Run a transfer over the tunnel, streaming output; return the tool's exit code.
+
+    On Windows the local path is first translated for WSL, where rsync runs
+    (:func:`wsl.to_wsl_path`); that raises :class:`wsl.WslError` if it fails.
+    """
+    if wsl.enabled():
+        if direction == "upload":
+            src = wsl.to_wsl_path(src, spec.wsl_distro)
+        else:
+            dest = wsl.to_wsl_path(dest, spec.wsl_distro)
     argv = get_backend(backend).argv(
         spec, direction=direction, src=src, dest=dest, dry_run=dry_run, extra=list(extra)
     )
-    return subprocess.run(argv).returncode
+    return subprocess.run(wsl.launch(argv, spec.wsl_distro)).returncode

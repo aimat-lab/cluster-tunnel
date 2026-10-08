@@ -2,6 +2,10 @@
 
 `ctun` is stateless and short-lived; persistence lives in a backgrounded ssh
 master process and its control socket. These helpers build and drive that master.
+
+On Windows every ssh runs inside WSL (see :mod:`cluster_tunnel.wsl`): the argv
+builders below are the same on every platform, and :func:`wsl.launch` adds the
+``wsl.exe`` prefix wherever a process is started.
 """
 
 from __future__ import annotations
@@ -9,10 +13,11 @@ from __future__ import annotations
 import shlex
 import subprocess
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath, PurePosixPath
+from typing import IO, Optional
 
 from cluster_tunnel import config as config_mod
-from cluster_tunnel import paths
+from cluster_tunnel import paths, wsl
 from cluster_tunnel.config import Config
 
 
@@ -22,32 +27,60 @@ class ConnSpec:
 
     name: str
     target: str  # ssh destination: alias or user@host
-    socket: Path
+    socket: PurePath  # on Windows, a POSIX path inside WSL
     control_persist: str
     server_alive_interval: int
     server_alive_count_max: int
     identity_file: str | None
+    ssh_config: str | None = None  # alternative ssh config file, passed as -F
+    wsl_distro: str | None = None  # Windows only; None means WSL's default distro
 
 
 def conn_spec(config: Config, name: str) -> ConnSpec:
     """Build the connection spec for a cluster, merging defaults."""
     cluster = config_mod.get_cluster(config, name)
     d = config.defaults
-    socket_dir = Path(d.socket_dir or str(paths.socket_dir())).expanduser()
+    if wsl.enabled():
+        # The master runs inside WSL, so its socket lives there too; ssh expands `~`.
+        socket: PurePath = PurePosixPath(d.socket_dir or wsl.DEFAULT_SOCKET_DIR) / name
+    else:
+        socket = Path(d.socket_dir or str(paths.socket_dir())).expanduser() / name
     return ConnSpec(
         name=name,
         target=config_mod.resolve_target(cluster),
-        socket=socket_dir / name,
+        socket=socket,
         control_persist=cluster.control_persist or d.control_persist,
         server_alive_interval=cluster.server_alive_interval or d.server_alive_interval,
         server_alive_count_max=cluster.server_alive_count_max or d.server_alive_count_max,
         identity_file=cluster.identity_file,
+        ssh_config=cluster.ssh_config or d.ssh_config,
+        wsl_distro=d.wsl_distro,
     )
+
+
+def _ssh_path(path: str) -> str:
+    """A path from the config, as the ssh that reads it should see it.
+
+    On Windows ssh runs inside WSL and the path is a WSL path, so it passes
+    through untouched (ssh expands ``~`` in ``-i`` itself). Elsewhere ``~`` is
+    expanded here.
+    """
+    return path if wsl.enabled() else str(Path(path).expanduser())
+
+
+def _config_opts(spec: ConnSpec) -> list[str]:
+    """``-F`` for an alternative ssh config file, when one is configured."""
+    return ["-F", _ssh_path(spec.ssh_config)] if spec.ssh_config else []
+
+
+def _identity_opts(spec: ConnSpec) -> list[str]:
+    """``-i`` for an explicit identity (key) file, when one is configured."""
+    return ["-i", _ssh_path(spec.identity_file)] if spec.identity_file else []
 
 
 def _socket_opts(spec: ConnSpec) -> list[str]:
     """Options to attach to an existing master via its control socket."""
-    return ["-S", str(spec.socket)]
+    return ["-S", str(spec.socket), *_config_opts(spec)]
 
 
 def control_opts(spec: ConnSpec) -> list[str]:
@@ -60,14 +93,13 @@ def control_opts(spec: ConnSpec) -> list[str]:
     fail-closed contract. This is the single source of truth for "attach to the
     master" shared by every transfer backend.
     """
-    opts = [
+    return [
         "-o", f"ControlPath={spec.socket}",
         "-o", "ControlMaster=no",
         "-o", "BatchMode=yes",
+        *_config_opts(spec),
+        *_identity_opts(spec),
     ]
-    if spec.identity_file:
-        opts += ["-i", str(Path(spec.identity_file).expanduser())]
-    return opts
 
 
 def open_master_argv(spec: ConnSpec, verbose: int = 0) -> list[str]:
@@ -84,21 +116,54 @@ def open_master_argv(spec: ConnSpec, verbose: int = 0) -> list[str]:
         "-o", f"ServerAliveInterval={spec.server_alive_interval}",
         "-o", f"ServerAliveCountMax={spec.server_alive_count_max}",
         "-o", "StrictHostKeyChecking=accept-new",
+        *_config_opts(spec),
+        *_identity_opts(spec),
     ]
-    if spec.identity_file:
-        argv += ["-i", str(Path(spec.identity_file).expanduser())]
     argv += ["-N", "-f", spec.target]
     return argv
 
 
-def ensure_clean_socket(spec: ConnSpec) -> None:
-    """Remove a stale control socket so a fresh master can be created.
+def check_argv(spec: ConnSpec) -> list[str]:
+    """argv that asks the master whether it is alive (``ssh -O check``)."""
+    return ["ssh", *_socket_opts(spec), "-O", "check", spec.target]
+
+
+# Runs inside WSL: $1 is the socket path (may start with `~`), the rest is the
+# `ssh -O check` argv. Child commands read /dev/null, not this script on stdin.
+_PREPARE_SOCKET = r"""
+p=$1; shift
+case $p in "~"/*) p="$HOME/${p#??}" ;; esac
+mkdir -p "$(dirname "$p")" || exit 1
+if [ -S "$p" ] && ! "$@" </dev/null >/dev/null 2>&1; then rm -f "$p"; fi
+"""
+
+
+def prepare_socket(spec: ConnSpec) -> None:
+    """Create the socket's directory and drop a stale socket before a new master.
 
     A dead socket file (left by a master that exited uncleanly) makes ssh refuse
     to multiplex ("ControlSocket ... already exists"); drop it if it isn't live.
+    On Windows the socket lives inside WSL, so the same steps run there, and a
+    failure raises :class:`wsl.WslError`.
     """
-    if spec.socket.exists() and not is_live(spec):
-        spec.socket.unlink(missing_ok=True)
+    if wsl.enabled():
+        try:
+            res = wsl.run(
+                ["sh", "-s", "--", str(spec.socket), *check_argv(spec)],
+                spec.wsl_distro,
+                stdin=_PREPARE_SOCKET.encode("utf-8"),
+                timeout=wsl.QUICK_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            raise wsl.WslError("WSL did not respond while preparing the control socket.") from None
+        if res.returncode != 0:
+            detail = res.stderr.strip() or f"exit code {res.returncode}"
+            raise wsl.WslError(f"cannot prepare the control socket {spec.socket} in WSL: {detail}")
+        return
+    socket = Path(spec.socket)
+    socket.parent.mkdir(parents=True, exist_ok=True)
+    if socket.exists() and not is_live(spec):
+        socket.unlink(missing_ok=True)
 
 
 def open_master(spec: ConnSpec, verbose: int = 0) -> int:
@@ -108,20 +173,47 @@ def open_master(spec: ConnSpec, verbose: int = 0) -> int:
     once the OTP has been entered (or immediately for key-based auth). With
     ``verbose`` > 0, ssh's diagnostics stream straight to the current terminal.
     """
-    spec.socket.parent.mkdir(parents=True, exist_ok=True)
-    ensure_clean_socket(spec)
-    return subprocess.run(open_master_argv(spec, verbose)).returncode
+    prepare_socket(spec)
+    return subprocess.run(wsl.launch(open_master_argv(spec, verbose), spec.wsl_distro)).returncode
+
+
+def _captured(
+    spec: ConnSpec,
+    argv: list[str],
+    stdin: Optional[IO[bytes]] = None,
+    timeout: Optional[float] = None,
+) -> subprocess.CompletedProcess:
+    """Run ``argv`` (through WSL on Windows) with its output captured as text.
+
+    Output is decoded as UTF-8 explicitly: the platform default (cp1252 on most
+    Windows machines) would garble or reject non-ASCII text from the cluster. A
+    missing launcher (no ssh, or no wsl.exe on Windows) comes back as exit code
+    127, and a ``timeout`` as exit code 124, instead of an exception.
+    """
+    full = wsl.launch(argv, spec.wsl_distro)
+    try:
+        return subprocess.run(
+            full,
+            stdin=stdin,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+    except FileNotFoundError as exc:
+        return subprocess.CompletedProcess(full, 127, "", f"{full[0]}: {exc.strerror or exc}\n")
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(full, 124, "", f"{full[0]}: no answer after {timeout}s\n")
 
 
 def check(spec: ConnSpec) -> subprocess.CompletedProcess:
-    """Probe the master via ``ssh -O check``, capturing its output."""
-    return subprocess.run(
-        ["ssh", *_socket_opts(spec), "-O", "check", spec.target],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
+    """Probe the master via ``ssh -O check``, capturing its output.
+
+    Bounded by a timeout, so a WSL that hangs on Windows reads as "not live"
+    instead of freezing ``status``, ``info`` or ``run``.
+    """
+    return _captured(spec, check_argv(spec), timeout=wsl.QUICK_TIMEOUT)
 
 
 def is_live(spec: ConnSpec) -> bool:
@@ -135,34 +227,20 @@ def run(spec: ConnSpec, tokens: list[str], *, tty: bool = False) -> int:
     if tty:
         argv.append("-tt")
     argv += [spec.target, shlex.join(tokens)]
-    return subprocess.run(argv).returncode
+    return subprocess.run(wsl.launch(argv, spec.wsl_distro)).returncode
 
 
 def capture(spec: ConnSpec, tokens: list[str]) -> subprocess.CompletedProcess:
-    """Run a command over the tunnel and capture its output (no streaming).
-
-    Output is decoded as UTF-8 explicitly: the platform default (cp1252 on most
-    Windows machines) would garble or reject non-ASCII text from the cluster.
-    """
-    return subprocess.run(
-        ["ssh", *_socket_opts(spec), "-o", "BatchMode=yes", spec.target, shlex.join(tokens)],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
+    """Run a command over the tunnel and capture its output (no streaming)."""
+    return _captured(
+        spec, ["ssh", *_socket_opts(spec), "-o", "BatchMode=yes", spec.target, shlex.join(tokens)]
     )
 
 
 def close(spec: ConnSpec) -> bool:
     """Cleanly tear down the master (`ssh -O exit`)."""
-    res = subprocess.run(
-        ["ssh", *_socket_opts(spec), "-O", "exit", spec.target],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-    return res.returncode == 0
+    argv = ["ssh", *_socket_opts(spec), "-O", "exit", spec.target]
+    return _captured(spec, argv, timeout=wsl.QUICK_TIMEOUT).returncode == 0
 
 
 def feed_script(
@@ -179,13 +257,8 @@ def feed_script(
     quoted = " ".join(shlex.quote(str(a)) for a in args)
     remote = f"bash -s -- {quoted}" if quoted else "bash -s"
     with open(script_path, "rb") as fh:
-        return subprocess.run(
-            ["ssh", *_socket_opts(spec), "-o", "BatchMode=yes", spec.target, remote],
-            stdin=fh,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
+        return _captured(
+            spec, ["ssh", *_socket_opts(spec), "-o", "BatchMode=yes", spec.target, remote], stdin=fh
         )
 
 

@@ -4,6 +4,10 @@
 defaults:
   control_persist: "12h"           # master lifetime; "yes" = until reboot/logout
   server_alive_interval: 60        # keepalive seconds, fights idle disconnects
+  # ssh_config: ~/.ssh/config_hpc  # optional: alternative ssh config file (ssh -F); also per cluster
+  # wsl_distro: Ubuntu             # Windows only: WSL distro that runs ssh (default distro if unset).
+  #                                # On Windows, ssh runs inside WSL: identity_file, socket_dir and
+  #                                # ssh_config are paths inside WSL (ssh_config: absolute, no `~`).
   terminal: auto                   # login --interactive popup: auto|gnome-terminal|xfce4-terminal|zenity
 
 agent:

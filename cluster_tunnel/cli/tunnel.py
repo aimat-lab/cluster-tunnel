@@ -41,12 +41,22 @@ class TunnelCommandsMixin:
 
         Pass `-v` (or `-vv`/`-vvv`) to surface ssh's own connection diagnostics
         when a login fails — useful for debugging host, auth, or network errors.
+
+        On Windows the tunnel runs inside WSL 2 (experimental): `login` first
+        checks that WSL has ssh, rsync and python3, and names the distro it uses.
         """
-        from cluster_tunnel import cmdlog, session, ssh
+        from cluster_tunnel import cmdlog, session, ssh, wsl
 
         config = self.load_config()
         name, cluster = self.resolve_cluster(config)
         spec = ssh.conn_spec(config, name)
+
+        via = None  # the WSL distro carrying the tunnel, on Windows
+        if wsl.enabled():
+            ready = wsl.preflight(spec.wsl_distro)
+            if not ready.ok:
+                raise click.ClickException("\n".join(ready.problems))
+            via = ready.distro
 
         # Default limit: --limit, else the cluster's configured session_limit.
         default_limit = limit
@@ -73,7 +83,11 @@ class TunnelCommandsMixin:
             )
             if creds is None:
                 raise click.ClickException("Login cancelled.")
-            if not popup.login_with_password(spec, creds.password, creds.otp, timeout, verbose):
+            try:
+                ok = popup.login_with_password(spec, creds.password, creds.otp, timeout, verbose)
+            except wsl.WslError as exc:
+                raise click.ClickException(str(exc)) from exc
+            if not ok:
                 hint = "" if verbose else " Re-run with -v (or -vv/-vvv) for ssh diagnostics."
                 raise click.ClickException(
                     f"Interactive login to '{name}' failed or timed out.{hint}"
@@ -82,7 +96,10 @@ class TunnelCommandsMixin:
             chosen_limit = creds.limit
             headline = f"[green]✓[/green] Tunnel to [cyan]{name}[/cyan] [green]established[/green] [dim](interactive)[/dim]."
         else:
-            rc = ssh.open_master(spec, verbose)
+            try:
+                rc = ssh.open_master(spec, verbose)
+            except wsl.WslError as exc:
+                raise click.ClickException(str(exc)) from exc
             if rc != 0 or not ssh.is_live(spec):
                 if verbose:
                     detail = (ssh.check(spec).stderr or "").strip()
@@ -117,7 +134,10 @@ class TunnelCommandsMixin:
         from rich.console import Group
         from rich.panel import Panel
 
-        body = [headline, "", f"  target   [dim]{spec.target}[/dim]", budget_line]
+        body = [headline, "", f"  target   [dim]{spec.target}[/dim]"]
+        if via:
+            body.append(f"  via      [dim]WSL distro {via}[/dim]")
+        body.append(budget_line)
         if note:
             body.append(f"  [dim]note: {note}[/dim]")
         self.cons.print(

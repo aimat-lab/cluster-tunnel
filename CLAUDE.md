@@ -26,9 +26,15 @@ Design rationale lives in `DESIGN.md`; `PLAN.md` is the historical build plan.
 
 - `ssh.py` — OpenSSH ControlMaster wrapper; the persistent tunnel transport
   (open/close/liveness of the control socket, connection specs).
+- `wsl.py` — the Windows bridge (experimental): on Windows every `ssh`/`rsync`
+  runs inside WSL 2 via `wsl.exe`; also the login preflight and local-path
+  translation. A no-op elsewhere.
 - `popup.py` — interactive login: a self-contained tkinter dialog for the human
-  to enter password/OTP + session limit, and a pty-driven `ssh` master that
-  types those secrets at their prompts. The agent never sees the secrets.
+  to enter password/OTP + session limit, then hands the secrets to
+  `pty_login`. The agent never sees the secrets.
+- `pty_login.py` — the pty loop that types the password/OTP at ssh's prompts.
+  **Standard library only**: on Windows its source is streamed to `python3 -I -`
+  inside WSL, where `cluster_tunnel` isn't installed.
 - `config.py` — pydantic models + loading/validation of the YAML config.
 - `session.py` — per-cluster session state (start time + budget limit), in the cache dir.
 - `budget.py` — session-scoped compute-budget guard (runs the cluster's budget
@@ -88,11 +94,15 @@ a version bump.
 A cluster entry (see `config.example.yaml` and `skill/reference.md`):
 
 - `host` / `ssh_alias` / `user` / `identity_file` — connection
+- `ssh_config` — alternative ssh config file passed as `-F` (also under `defaults`)
 - `requires_otp` (default `false`) — advisory; shows/hides the OTP field in the popup
 - `requires_password` (default `true`) — set `false` for OTP-only / key-only
   clusters; hides the password field and requires a non-empty password when true
 - `description`, `restrictions` (advisory) — surfaced by `ctun info`
 - `budget` — `script` + `session_limit` + `unit` + `guard_commands` + `fail_mode`
+
+Under `defaults`, `wsl_distro` picks the WSL distro on Windows. There,
+`identity_file`, `socket_dir` and `ssh_config` are paths inside WSL.
 
 ## Releasing a new version
 

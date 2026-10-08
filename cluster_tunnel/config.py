@@ -5,13 +5,13 @@ from __future__ import annotations
 import os
 import re
 import shutil
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Optional
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from cluster_tunnel import constants, paths
+from cluster_tunnel import constants, paths, wsl
 
 PACKAGE_DIR = Path(__file__).parent
 
@@ -23,6 +23,8 @@ class Defaults(BaseModel):
     server_alive_interval: int = constants.DEFAULT_SERVER_ALIVE_INTERVAL
     server_alive_count_max: int = constants.DEFAULT_SERVER_ALIVE_COUNT_MAX
     socket_dir: Optional[str] = None  # filled by the loader if left blank
+    ssh_config: Optional[str] = None  # alternative ssh config file (ssh -F)
+    wsl_distro: Optional[str] = None  # Windows: WSL distro to run ssh in (default distro if unset)
     terminal: str = "auto"
 
 
@@ -57,6 +59,7 @@ class Cluster(BaseModel):
     user: Optional[str] = None
     ssh_alias: Optional[str] = None
     identity_file: Optional[str] = None
+    ssh_config: Optional[str] = None  # overrides defaults.ssh_config for this cluster
     requires_otp: bool = False
     requires_password: bool = True
     control_persist: Optional[str] = None
@@ -110,7 +113,10 @@ def load_config(cli_path: str | None = None) -> Config:
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     config = Config(**raw)
     if not config.defaults.socket_dir:
-        config.defaults.socket_dir = str(paths.socket_dir())
+        # On Windows the master runs inside WSL, so its socket must live there.
+        config.defaults.socket_dir = (
+            wsl.DEFAULT_SOCKET_DIR if wsl.enabled() else str(paths.socket_dir())
+        )
     return config
 
 
@@ -141,14 +147,17 @@ def budget_script_path(config_path: Path, name: str, script: str | None) -> Path
 def validation_warnings(config: "Config", config_path: Path) -> list[str]:
     """Advisory (non-structural) problems pydantic can't catch on its own.
 
-    These don't make the config malformed, but each one silently breaks the
-    budget guard at submission time, so ``config --validate`` surfaces them:
+    These don't make the config malformed, but each one silently breaks something
+    at run time, so ``config --validate`` surfaces them:
 
     - a cluster's ``budget.script`` doesn't exist on disk (the probe can't be
       shipped over the tunnel, so the guard fails — and with ``fail_mode:
       closed`` that blocks every submission);
     - a ``guard_commands`` entry isn't a valid regex (the matcher falls back to
-      a literal comparison, so the intended pattern never fires).
+      a literal comparison, so the intended pattern never fires);
+    - on Windows, a path that ssh reads inside WSL (``socket_dir``,
+      ``identity_file``, ``ssh_config``) is written as a Windows path, or an
+      ``ssh_config`` starts with ``~``, which ssh does not expand for ``-F``.
 
     Returns a list of human-readable warning strings; empty means all clear.
     """
@@ -172,6 +181,37 @@ def validation_warnings(config: "Config", config_path: Path) -> list[str]:
                     f"cluster '{name}': guard_commands entry {pattern!r} is not a valid "
                     f"regex ({exc}); it will only match the literal command name."
                 )
+    if wsl.enabled():
+        warnings += _wsl_path_warnings(config)
+    return warnings
+
+
+def _wsl_path_warnings(config: "Config") -> list[str]:
+    """On Windows, flag config paths that ssh, running inside WSL, can't use."""
+    entries = [
+        ("defaults.socket_dir", config.defaults.socket_dir),
+        ("defaults.ssh_config", config.defaults.ssh_config),
+    ]
+    for name, cluster in config.clusters.items():
+        entries += [
+            (f"cluster '{name}': identity_file", cluster.identity_file),
+            (f"cluster '{name}': ssh_config", cluster.ssh_config),
+        ]
+    warnings: list[str] = []
+    for label, value in entries:
+        if not value:
+            continue
+        if PureWindowsPath(value).drive or "\\" in value:
+            warnings.append(
+                f"{label} is a Windows path ({value}); on Windows ctun's ssh runs inside "
+                "WSL and needs a WSL path, e.g. ~/.ssh/id_ed25519 or "
+                "/mnt/c/Users/<you>/.ssh/config."
+            )
+        elif label.endswith("ssh_config") and value.startswith("~"):
+            warnings.append(
+                f"{label} starts with '~', which ssh does not expand for -F; use an "
+                "absolute WSL path, e.g. /home/<you>/.ssh/config."
+            )
     return warnings
 
 

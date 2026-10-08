@@ -3,9 +3,10 @@
 When an agent runs ``ctun ... login --interactive`` there is no human at ctun's
 terminal. We pop a small **tkinter** window asking the present human for the
 password/OTP and the session limit, then drive the SSH master inside a
-**pseudo-terminal**, typing the password into it at the prompt. The master is
-started with ``-f`` so it backgrounds after authentication and persists
-independently of ctun.
+**pseudo-terminal**, typing the password into it at the prompt
+(:mod:`cluster_tunnel.pty_login`). The master is started with ``-f`` so it
+backgrounds after authentication and persists independently of ctun. On Windows
+that pty driver runs inside WSL, next to ssh.
 
 The dialog is launched as a subprocess under a Python whose Tk actually renders on
 this display: some interpreters' Tk builds abort on certain X servers, so we probe
@@ -15,37 +16,19 @@ returned to ctun over a pipe (never via argv or disk).
 
 from __future__ import annotations
 
+import base64
 import functools
 import json
 import os
 import shutil
 import subprocess
 import sys
-import time
 from dataclasses import dataclass
+from importlib import resources
 from typing import Optional
 
-from cluster_tunnel import ssh
+from cluster_tunnel import ssh, wsl
 from cluster_tunnel.ssh import ConnSpec
-
-# Cluster login asks for two distinct secrets — the service password and the
-# one-time passcode (OTP) — in a sequence whose order varies by site. We classify
-# each prompt by its wording and answer it with the matching secret. OTP keys are
-# checked first because they are the more specific signal.
-_OTP_KEYS = (
-    b"passcode",
-    b"verification",
-    b"one-time",
-    b"otp",
-    b"token",
-    b"second factor",
-    b"2fa",
-)
-_PASSWORD_KEYS = (
-    b"password",
-    b"passphrase",
-)
-_PROMPT_KEYS = _OTP_KEYS + _PASSWORD_KEYS
 
 # Renders a throwaway window; exits 0 only if this interpreter's Tk works here.
 _RENDER_PROBE = "import tkinter as tk; r=tk.Tk(); tk.Label(r,text='x').pack(); r.update(); r.destroy()"
@@ -259,26 +242,6 @@ def prompt_credentials(
     )
 
 
-def _looks_like_prompt(buf: bytes) -> bool:
-    low = buf.lower()
-    return any(key in low for key in _PROMPT_KEYS)
-
-
-def _classify_prompt(buf: bytes) -> Optional[str]:
-    """Classify the most recent prompt as ``"otp"``, ``"password"``, or ``None``.
-
-    OTP keywords are tested first: an OTP prompt rarely contains "password", but a
-    banner or password prompt could mention a token, so the more specific signal
-    wins.
-    """
-    low = buf.lower()
-    if any(key in low for key in _OTP_KEYS):
-        return "otp"
-    if any(key in low for key in _PASSWORD_KEYS):
-        return "password"
-    return None
-
-
 def login_with_password(
     spec: ConnSpec,
     password: str,
@@ -288,80 +251,63 @@ def login_with_password(
 ) -> bool:
     """Open the SSH master in a pty, answering the password and OTP prompts.
 
-    The cluster asks for the service password and the one-time passcode in a
-    sequence whose order varies by site; each prompt is classified by its wording
-    (:func:`_classify_prompt`) and answered with the matching secret. Each secret
-    is sent at most once. A missing/blank ``otp`` simply means OTP prompts go
-    unanswered (for clusters that do not use one). With ``verbose`` > 0, ssh's own
-    diagnostics are captured and printed to stderr if the login fails.
+    The prompt-answering loop lives in :mod:`cluster_tunnel.pty_login`. It runs
+    in-process here, or inside WSL on Windows, next to the ssh it drives. With
+    ``verbose`` > 0, ssh's own diagnostics are printed to stderr if the login
+    fails.
     """
-    # Imported here, not at module level: `pty` needs termios, which Windows
-    # lacks, and the rest of this module (the dialog) must import everywhere.
-    import pty
-    import select
+    from cluster_tunnel import pty_login
 
-    spec.socket.parent.mkdir(parents=True, exist_ok=True)
-    ssh.ensure_clean_socket(spec)
-    argv = ssh.open_master_argv(spec, verbose)
+    ssh.prepare_socket(spec)
+    master = ssh.open_master_argv(spec, verbose)
+    check = ssh.check_argv(spec)
+    if wsl.enabled():
+        return _login_in_wsl(spec, master, check, password, otp, timeout, verbose)
 
-    secrets = {"password": password, "otp": otp}
-    sent = {"password": False, "otp": False}
-
-    pid, fd = pty.fork()
-    if pid == 0:  # child: become the ssh master, attached to the pty
-        try:
-            os.execvp(argv[0], argv)
-        except Exception:
-            os._exit(127)
-
-    deadline = time.time() + timeout
-    buf = b""
-    transcript = b""
-    try:
-        while time.time() < deadline:
-            if ssh.is_live(spec):
-                break
-            try:
-                rlist, _, _ = select.select([fd], [], [], 0.3)
-            except (OSError, ValueError):
-                break
-            if fd in rlist:
-                try:
-                    data = os.read(fd, 1024)
-                except OSError:
-                    break
-                if not data:  # child exited / EOF
-                    break
-                buf += data
-                transcript += data
-                kind = _classify_prompt(buf)
-                if kind and not sent[kind] and secrets.get(kind):
-                    try:
-                        os.write(fd, secrets[kind].encode() + b"\n")
-                    except OSError:
-                        break
-                    sent[kind] = True
-                    buf = b""  # start fresh so the next prompt is classified alone
-                else:
-                    buf = buf[-256:]  # bound the buffer to the current prompt line
-    finally:
-        try:
-            os.close(fd)
-        except OSError:
-            pass
-        try:
-            os.waitpid(pid, os.WNOHANG)
-        except OSError:
-            pass
-
-    # brief grace for the backgrounded master to register on the socket
-    live = ssh.is_live(spec)
-    for _ in range(6):
-        if live:
-            break
-        time.sleep(0.3)
-        live = ssh.is_live(spec)
-
+    live, transcript = pty_login.login(master, check, password, otp, timeout)
     if not live and verbose and transcript:
         sys.stderr.write(transcript.decode("utf-8", "replace"))
     return live
+
+
+def _login_in_wsl(
+    spec: ConnSpec,
+    master: list[str],
+    check: list[str],
+    password: str,
+    otp: Optional[str],
+    timeout: int,
+    verbose: int,
+) -> bool:
+    """Run :mod:`cluster_tunnel.pty_login` inside WSL via ``python3 -I -``.
+
+    cluster_tunnel isn't installed in WSL, so the module's source is streamed on
+    stdin with a call to its ``main()`` appended. The secrets ride base64-encoded
+    inside that program text, never in argv or the environment: the backgrounded
+    master would keep its environment for its whole lifetime. ``-I`` keeps the
+    working directory (the user's project, translated) off ``sys.path``, so a
+    module planted there can't run before the secrets are decoded.
+    """
+    payload = json.dumps(
+        {
+            "master_argv": master,
+            "check_argv": check,
+            "password": password,
+            "otp": otp,
+            "timeout": timeout,
+            "verbose": verbose,
+        }
+    )
+    encoded = base64.b64encode(payload.encode("utf-8")).decode("ascii")
+    source = resources.files("cluster_tunnel").joinpath("pty_login.py").read_text(encoding="utf-8")
+    program = f"{source}\nraise SystemExit(main({encoded!r}))\n"
+    try:
+        res = wsl.run(
+            ["python3", "-I", "-"], spec.wsl_distro, stdin=program.encode("utf-8"),
+            timeout=timeout + 60,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    if res.returncode != 0 and verbose and res.stderr:
+        sys.stderr.write(res.stderr)
+    return res.returncode == 0

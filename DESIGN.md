@@ -90,6 +90,33 @@ used, making it a usable pre-flight check.
 | site max-session policy | same — re-auth is unavoidable because OTP needs a human |
 | `>MaxSessions` concurrent channels (default 10) | extra concurrent `run`s queue briefly |
 
+### 2.4 Windows: the WSL bridge (experimental)
+
+No Windows build of OpenSSH can carry this design. Windows' own OpenSSH rejects
+`-M`/`-S` outright, and Git for Windows' OpenSSH starts a master but then opens a
+fresh connection for every command, which on an OTP cluster means a new OTP each
+time. So on Windows `ctun` runs the same Linux transport inside WSL 2: every ssh
+invocation above, and rsync, is launched as `wsl.exe [-d <distro>] -e ...`
+(`wsl.py`). `ctun` itself, its config and its session state stay on Windows; the
+control socket, ssh config and keys live in WSL.
+
+- The interactive login's pty driver (`pty_login.py`) must run next to ssh, so
+  its source is streamed to `python3 -I -` inside WSL with the secrets
+  base64-encoded in the program text: never in argv or the environment, which
+  the backgrounded master would keep for its whole lifetime. `-I` keeps the
+  working directory (the user's project) off `sys.path`, and `wsl.exe` is
+  started by its full System32 path, so nothing planted in the project can
+  intercept the secrets.
+- `login` runs a preflight first (WSL 2; `ssh`, `rsync`, `python3` ≥ 3.10) and
+  names the distro it checked.
+- Input to WSL is fed as bytes: a text-mode pipe on Windows would turn `\n` into
+  `\r\n` and break scripts on the Linux side.
+
+The alternative studied was a Windows-only Python daemon holding an asyncssh
+connection. It needs no WSL, but it is a second transport with its own login
+code, SFTP instead of rsync, and only part of the ssh config. It can still be
+added later as another transport for machines that cannot run WSL 2.
+
 ---
 
 ## 3. Command surface

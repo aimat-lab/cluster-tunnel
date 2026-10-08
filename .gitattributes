@@ -1,0 +1,3 @@
+# Shell scripts run under Linux bash (on the cluster, or inside WSL on Windows),
+# which breaks on CRLF line endings: keep them LF even in Windows checkouts.
+*.sh text eol=lf

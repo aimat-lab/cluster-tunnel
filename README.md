@@ -11,6 +11,9 @@ You authenticate once. After that, every `ctun -t <cluster> run -- <command>` re
 the live connection with zero re-authentication, and any job submission is checked
 against a budget before it reaches the scheduler.
 
+Runs on Linux and macOS, and on Windows through WSL 2 (experimental, see
+[Windows](#-windows-experimental)).
+
 ```console
 $ ctun -t horeka login -i              # interactive login once: password + OTP popup
 $ ctun -t horeka run -- squeue --me     # reuse the live tunnel, no re-auth
@@ -26,6 +29,7 @@ $ ctun -t horeka logout                 # close the tunnel
 - [How it works](#️-how-it-works)
 - [Requirements](#-requirements)
 - [Install](#-install)
+- [Windows (experimental)](#-windows-experimental)
 - [Quickstart](#-quickstart)
 - [Commands](#-commands)
 - [Configuration](#-configuration)
@@ -58,6 +62,8 @@ policy allow; when it eventually drops, `run` fails with a clear message and you
 ## 📋 Requirements
 
 - **Linux or macOS** with an **OpenSSH client** (`ssh`) — version 7.x+.
+- **Windows 10/11 (experimental):** WSL 2 with a Linux distro that has `ssh`,
+  `rsync` and `python3` ≥ 3.10 — see [Windows](#-windows-experimental).
 - **Python ≥ 3.10**.
 - For the optional pop-up login dialog (`login --interactive`): a graphical display and
   a working **Tk** (provided by your system Python's `tkinter`).
@@ -88,6 +94,53 @@ $ uv sync               # create .venv and install
 $ uv run ctun --help
 $ uv run pytest         # run the test suite
 ```
+
+---
+
+## 🪟 Windows (experimental)
+
+No Windows build of OpenSSH can share one login across commands (ControlMaster),
+so on Windows `ctun` runs `ssh` and `rsync` inside **WSL 2**. Only the
+connection lives there: install `ctun` on Windows as above, and your editor,
+your agent and every `ctun` command stay on Windows.
+
+**Setup**
+
+1. Install WSL 2 with a distro (`wsl --install` in an administrator PowerShell)
+   and make sure it has the tools: `sudo apt install openssh-client rsync python3`
+   (Ubuntu ships them).
+2. Keep your SSH setup inside WSL. ssh there reads WSL's `~/.ssh/config` and
+   keys, not the Windows ones. Copy keys into WSL's `~/.ssh` and `chmod 600`
+   them: keys on the Windows drive (`/mnt/c/...`) fail OpenSSH's permission check.
+3. `ctun -t <cluster> login` checks WSL first and names the distro it uses.
+
+**Config on Windows**
+
+- `identity_file`, `socket_dir` and `ssh_config` are **paths inside WSL**
+  (`~/.ssh/id_ed25519`, not `C:\Users\...`); `ctun config --validate` flags
+  Windows-style ones.
+- `ssh_config` (under `defaults`, or per cluster) points ssh at another config
+  file, e.g. your Windows one: `/mnt/c/Users/<you>/.ssh/config`. Use an
+  absolute path; ssh does not expand `~` there.
+- `wsl_distro` (under `defaults`) picks a distro other than WSL's default.
+
+`upload` and `download` accept Windows paths (`C:\data\`, `.\results`) and WSL
+paths (`/home/you/data`) on the local side; a trailing slash keeps its rsync
+meaning.
+
+**Caveats**
+
+- Git Bash (which Claude Code uses on Windows) rewrites arguments that start
+  with `/` into Windows paths before `ctun` sees them: `run -- ls /scratch`
+  would send `C:/Program Files/Git/scratch`. Set `MSYS_NO_PATHCONV=1`, e.g. as
+  a Windows user environment variable, to turn that off.
+- Files checked out by Git on Windows often get CRLF line endings, which bash
+  on the cluster chokes on (`sbatch` refuses them outright). Keep `.sh` and
+  batch scripts LF, e.g. with `*.sh text eol=lf` in `.gitattributes`.
+- There is no logout hook on Windows: a reboot ends the tunnel, and the next
+  `login` starts a fresh session.
+- Tested against local SSH servers, not yet against a real OTP cluster from
+  Windows.
 
 ---
 
@@ -289,7 +342,7 @@ target, it logs out every configured cluster.
 
 To run `ctun logout` **automatically on every logout, reboot, or shutdown**,
 install the systemd user hook in [`systemd/`](./systemd/) (`cd systemd &&
-./install.sh`). See [systemd/README.md](./systemd/README.md) for details.
+./install.sh`; Linux only). See [systemd/README.md](./systemd/README.md) for details.
 
 ---
 
@@ -303,6 +356,8 @@ Config lives at `~/.config/cluster-tunnel/config.yaml` (override with `$CTUN_CON
 defaults:
   control_persist: "12h"          # how long the tunnel stays alive; "yes" = until reboot/logout
   server_alive_interval: 60       # keepalive seconds; fights idle disconnects
+  # ssh_config: ~/.ssh/config_hpc # optional: alternative ssh config file (ssh -F); also per cluster
+  # wsl_distro: Ubuntu            # Windows only: WSL distro that runs ssh (default distro if unset)
   terminal: auto                  # reserved for future use
 
 # Optional preamble surfaced in `ctun info` (e.g. guidance for an agent).
@@ -410,6 +465,9 @@ control socket is local to that machine.
 | `~/.config/cluster-tunnel/budget/<cluster>.sh` | Per-cluster budget scripts. |
 | `~/.cache/cluster-tunnel/sockets/<cluster>` | SSH control sockets (the live tunnels). |
 | `~/.cache/cluster-tunnel/sessions/<cluster>.json` | Internal session state (start time, limit). |
+
+On Windows, the config and cache live under `%LOCALAPPDATA%\jonas\cluster-tunnel`,
+and the control sockets inside WSL, at `~/.cache/cluster-tunnel/sockets/` there.
 
 ---
 

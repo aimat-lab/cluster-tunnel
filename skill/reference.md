@@ -18,6 +18,7 @@ workflow and golden rules, see [SKILL.md](SKILL.md).
 - `config` — manage the config file
 - JSON output for scripting
 - Failure modes and what they mean
+- Windows (experimental)
 
 ## Invocation shape and global options
 
@@ -230,6 +231,7 @@ clusters:
     user: ab1234
     requires_otp: true
     requires_password: true     # optional (default true); false = OTP/key only, no password
+    ssh_config: /path/to/config # optional: alternative ssh config file (ssh -F)
     description: |
       HAICORE @ KIT. GPU jobs via Slurm.
     restrictions:               # advisory only — shown by `info`, never enforced
@@ -260,3 +262,22 @@ scraping the rendered tables/panels.
 | `Submission blocked … fail_mode closed` | The budget script errored and the cluster fails closed. | Report it; the budget probe is broken, not the job. |
 | Interactive login `failed or timed out` | Nobody filled the popup, or auth failed. | Ask the user to retry; add `-v` for ssh diagnostics. |
 | `No display for the login dialog` | No GUI available for the popup. | Ask the user to run plain `ctun -t <cluster> login` in a terminal. |
+| `WSL is not installed` / `WSL distro '…' lacks …` | Windows only: WSL can't carry the tunnel yet. | Show the user the message; they fix WSL. Don't work around it. |
+
+## Windows (experimental)
+
+On Windows, `ctun` runs `ssh` and `rsync` inside WSL 2; every command works the
+same. Differences that matter to you:
+
+- **Git Bash rewrites `/paths`.** Arguments starting with `/` become Windows
+  paths before `ctun` sees them (`/scratch/x` → `C:/Program Files/Git/scratch/x`),
+  which breaks remote paths in `run` and `upload`/`download`. Prefix such calls
+  with `MSYS_NO_PATHCONV=1`, unless the user has set it globally.
+- **Line endings.** Scripts written or checked out on Windows may have CRLF
+  endings; bash on the cluster fails on them and `sbatch` rejects them. Make
+  sure `.sh`/batch scripts are LF before uploading.
+- **Local paths** for `upload`/`download` may be Windows paths (`C:\data\`,
+  `.\out`) or WSL paths (`/home/<user>/data`); trailing slashes keep their rsync
+  meaning.
+- `identity_file`, `socket_dir` and `ssh_config` in the config are paths
+  inside WSL; `wsl_distro` (under `defaults`) picks the distro.

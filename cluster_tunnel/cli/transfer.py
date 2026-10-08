@@ -6,6 +6,7 @@ import rich_click as click
 
 from cluster_tunnel.cli.errors import fail
 from cluster_tunnel.constants import ExitCode
+from cluster_tunnel.wsl import WslError
 
 _CTX = {"ignore_unknown_options": True}
 
@@ -30,11 +31,13 @@ class TransferCommandsMixin:
             )
 
         # Transfers are not budget-guarded — moving data isn't compute.
-        raise SystemExit(
-            transfer_mod.run_transfer(
+        try:
+            rc = transfer_mod.run_transfer(
                 spec, direction, src, dest, dry_run=dry_run, extra=extra
             )
-        )
+        except WslError as exc:
+            raise click.ClickException(str(exc)) from exc
+        raise SystemExit(rc)
 
     @click.command("upload", context_settings=_CTX)
     @click.pass_obj

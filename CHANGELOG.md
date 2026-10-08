@@ -7,15 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Groundwork for Windows support; the Windows transport itself (via WSL) follows
-separately.
-
 ### Added
 
+- **Windows support (experimental).** No Windows OpenSSH build can multiplex
+  sessions over a control socket, so on Windows `ctun` runs `ssh` and `rsync`
+  inside WSL 2 via `wsl.exe`, while `ctun` itself, the editor and the agent stay
+  on Windows. `login` first checks that WSL 2 has `ssh`, `rsync` and
+  `python3` ≥ 3.10, names the distro it uses, and fails with actionable
+  messages otherwise. The interactive login's pty driver runs inside WSL
+  (`python3 -I`), with the password/OTP passed on stdin, never in argv or the
+  environment; `wsl.exe` is started by its full System32 path.
+  `upload`/`download` translate the local path for WSL and keep trailing
+  slashes. On Windows, `identity_file`, `socket_dir` and `ssh_config` are paths
+  inside WSL; `config --validate` flags Windows-style ones.
+- `ssh_config` config key (under `defaults` and per cluster): an alternative ssh
+  config file, passed to every ssh call as `-F`.
+- `wsl_distro` config key (under `defaults`, Windows only): the WSL distro that
+  runs ssh; WSL's default distro if unset.
+- `.gitattributes` keeps `*.sh` LF in Windows checkouts, so the bundled probes
+  still run under Linux bash.
 - CI: GitHub Actions runs the test suite on Ubuntu and Windows. It sets
   `PYTHONWARNDEFAULTENCODING=1`, and `[tool.pytest.ini_options]` turns the
   resulting warnings into errors in ctun's own modules, so text I/O that relies
   on the platform's default encoding fails the build on any OS.
+
+### Changed
+
+- The interactive login's prompt-answering loop moved from `popup.py` into the
+  standard-library-only `cluster_tunnel/pty_login.py`, so it can also run
+  inside WSL; Linux and macOS run it in-process as before.
+- A missing `ssh` (or `wsl.exe`) now reads as "tunnel down" instead of a
+  traceback, and `ssh -O check`/`-O exit` give up after 60 seconds.
 
 ### Fixed
 

@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import subprocess
 import sys
+from pathlib import PurePosixPath
 
-from cluster_tunnel import popup
+import pytest
+
+from cluster_tunnel import popup, pty_login, ssh, wsl
 from cluster_tunnel.popup import Credentials
+from cluster_tunnel.ssh import ConnSpec
 
 
 def test_prompt_parses(monkeypatch) -> None:
@@ -71,15 +77,6 @@ def test_prompt_forwards_auth_flags(monkeypatch) -> None:
     assert captured["args"][-2:] == ["1", "0"]
 
 
-def test_classify_prompt() -> None:
-    assert popup._classify_prompt(b"user@host's password: ") == "password"
-    assert popup._classify_prompt(b"Enter passphrase for key: ") == "password"
-    assert popup._classify_prompt(b"Verification code: ") == "otp"
-    assert popup._classify_prompt(b"OTP: ") == "otp"
-    assert popup._classify_prompt(b"(MFA) Enter your passcode: ") == "otp"
-    assert popup._classify_prompt(b"Last login: yesterday") is None
-
-
 def test_prompt_cancel(monkeypatch) -> None:
     monkeypatch.setattr(popup, "_dialog_python", lambda: "/usr/bin/python3")
     monkeypatch.setattr(
@@ -91,12 +88,6 @@ def test_prompt_cancel(monkeypatch) -> None:
 def test_prompt_no_working_python(monkeypatch) -> None:
     monkeypatch.setattr(popup, "_dialog_python", lambda: None)
     assert popup.prompt_credentials("k", "u@h", None) is None
-
-
-def test_looks_like_prompt() -> None:
-    assert popup._looks_like_prompt(b"user@host's password: ")
-    assert popup._looks_like_prompt(b"Verification code:")
-    assert not popup._looks_like_prompt(b"Last login: yesterday on tty1")
 
 
 def test_imports_without_pty() -> None:
@@ -129,3 +120,58 @@ def test_windows_dialog_uses_running_interpreter(monkeypatch) -> None:
     # No /usr/bin/python3 on Windows, and a PATH `python3` may be the Store stub.
     monkeypatch.setattr(sys, "platform", "win32")
     assert popup._candidate_pythons() == [sys.executable]
+
+
+def _spec() -> ConnSpec:
+    return ConnSpec("k", "u@h", PurePosixPath("~/sockets/k"), "12h", 60, 3, None, wsl_distro="Ubuntu")
+
+
+def _stub_ssh(monkeypatch, master: list[str], check: list[str]) -> None:
+    monkeypatch.setattr(ssh, "prepare_socket", lambda spec: None)
+    monkeypatch.setattr(ssh, "open_master_argv", lambda spec, verbose=0: master)
+    monkeypatch.setattr(ssh, "check_argv", lambda spec: check)
+
+
+def test_login_runs_driver_in_process_off_windows(monkeypatch) -> None:
+    calls: list = []
+    monkeypatch.setattr(wsl, "enabled", lambda: False)
+    _stub_ssh(monkeypatch, ["ssh", "-M"], ["ssh", "-O", "check"])
+    monkeypatch.setattr(pty_login, "login", lambda *a: calls.append(a) or (True, b""))
+    assert popup.login_with_password(_spec(), "pw", "123", timeout=5)
+    assert calls == [(["ssh", "-M"], ["ssh", "-O", "check"], "pw", "123", 5)]
+
+
+def test_windows_login_streams_driver_with_secrets_off_argv(monkeypatch) -> None:
+    seen: dict = {}
+
+    def fake_run(argv, distro=None, *, stdin=b"", timeout=None):
+        seen.update(argv=argv, distro=distro, stdin=stdin)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(wsl, "enabled", lambda: True)
+    monkeypatch.setattr(wsl, "run", fake_run)
+    _stub_ssh(monkeypatch, ["ssh", "-M"], ["ssh", "-O", "check"])
+    assert popup.login_with_password(_spec(), "s3cret", "123456", timeout=5)
+
+    assert seen["argv"] == ["python3", "-I", "-"] and seen["distro"] == "Ubuntu"
+    program = seen["stdin"].decode("utf-8")
+    assert "s3cret" not in program  # only inside the base64 payload
+    encoded = program.rsplit("main(", 1)[1].split(")", 1)[0].strip("'")
+    args = json.loads(base64.b64decode(encoded))
+    assert (args["password"], args["otp"], args["master_argv"]) == ("s3cret", "123456", ["ssh", "-M"])
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="runs the pty driver locally")
+def test_windows_login_program_works_end_to_end(monkeypatch, fake_master) -> None:
+    # Run the exact program Windows streams into WSL, locally instead of
+    # through wsl.exe, against the fake master.
+    def local_run(argv, distro=None, *, stdin=b"", timeout=None):
+        res = subprocess.run([sys.executable, *argv[1:]], input=stdin, capture_output=True, timeout=timeout)
+        return subprocess.CompletedProcess(argv, res.returncode, "", res.stderr.decode())
+
+    master, check, marker = fake_master
+    monkeypatch.setattr(wsl, "enabled", lambda: True)
+    monkeypatch.setattr(wsl, "run", local_run)
+    _stub_ssh(monkeypatch, master, check)
+    assert popup.login_with_password(_spec(), "s3cret", "123456", timeout=20)
+    assert marker.exists()

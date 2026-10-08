@@ -8,6 +8,21 @@ from pathlib import Path
 
 import pytest
 
+from cluster_tunnel import wsl
+
+
+@pytest.fixture(autouse=True)
+def _native_transport(request, monkeypatch) -> None:
+    """Run every test on the native (non-WSL) transport, on every OS.
+
+    On the Windows CI runner ``wsl.enabled()`` is really true, but there is no
+    usable WSL there. Tests of the WSL path switch it on themselves; tests
+    marked ``real_wsl`` keep the real behaviour.
+    """
+    if request.node.get_closest_marker("real_wsl") is None:
+        monkeypatch.setattr(wsl, "enabled", lambda: False)
+        monkeypatch.setattr(wsl, "_wsl_exe", lambda: "wsl.exe")
+
 
 def _find_bash() -> str | None:
     """A bash that runs the bundled .sh scripts with this OS's native paths.
@@ -40,3 +55,27 @@ def bash() -> str:
     if path is None:
         pytest.skip("needs a POSIX bash (on Windows: Git for Windows)")
     return path
+
+
+# A stand-in for `ssh -M`: asks for a password, then an OTP, and on the right
+# pair ("s3cret", "123456") creates a marker file standing in for the control
+# socket. One line, so it survives any command-line quoting.
+FAKE_MASTER = (
+    "import pathlib, sys; "
+    "pw = input('user@host password: '); otp = input('Verification code: '); "
+    "ok = (pw, otp) == ('s3cret', '123456'); "
+    "ok and pathlib.Path(sys.argv[1]).touch(); "
+    "sys.exit(0 if ok else 1)"
+)
+FAKE_CHECK = "import os, sys; sys.exit(0 if os.path.exists(sys.argv[1]) else 255)"
+
+
+@pytest.fixture
+def fake_master(tmp_path: Path) -> tuple[list[str], list[str], Path]:
+    """``(master_argv, check_argv, marker)`` for a fake ssh master."""
+    marker = tmp_path / "socket"
+    return (
+        [sys.executable, "-c", FAKE_MASTER, str(marker)],
+        [sys.executable, "-c", FAKE_CHECK, str(marker)],
+        marker,
+    )

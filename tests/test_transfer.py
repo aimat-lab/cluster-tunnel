@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+import subprocess
+from pathlib import Path, PurePosixPath
 
 import pytest
 
-from cluster_tunnel import transfer
+from cluster_tunnel import transfer, wsl
 from cluster_tunnel.ssh import ConnSpec
 
 
@@ -69,3 +70,31 @@ def test_get_backend_default_and_unknown() -> None:
     assert transfer.get_backend("rsync").name == "rsync"
     with pytest.raises(ValueError):
         transfer.get_backend("nope")
+
+
+def _windows_transfer(monkeypatch, direction: str, src: str, dest: str) -> list[str]:
+    """Run a transfer as on Windows (wsl.exe and wslpath faked); return its argv."""
+    captured: dict = {}
+
+    def fake_run(argv, *a, **k):
+        captured["argv"] = argv
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(wsl, "enabled", lambda: True)
+    monkeypatch.setattr(wsl, "to_wsl_path", lambda path, distro=None: "/mnt/c/proj/data/")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    spec = ConnSpec("k", "user@host", PurePosixPath("~/s/k"), "12h", 60, 3, None, wsl_distro="Ubuntu")
+    assert transfer.run_transfer(spec, direction, src, dest) == 0
+    return captured["argv"]
+
+
+def test_windows_upload_runs_rsync_in_wsl_with_translated_source(monkeypatch) -> None:
+    argv = _windows_transfer(monkeypatch, "upload", "C:\\proj\\data\\", "data")
+    assert argv[:5] == ["wsl.exe", "-d", "Ubuntu", "-e", "rsync"]
+    assert argv[-2:] == ["/mnt/c/proj/data/", "user@host:data"]
+    assert "ControlPath=~/s/k" in argv[argv.index("-e", 5) + 1]
+
+
+def test_windows_download_translates_the_destination(monkeypatch) -> None:
+    argv = _windows_transfer(monkeypatch, "download", "results", "C:\\proj\\data\\")
+    assert argv[-2:] == ["user@host:results", "/mnt/c/proj/data/"]

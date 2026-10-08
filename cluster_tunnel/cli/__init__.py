@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import codecs
 import logging
+import os
 import sys
 
 import rich_click as click
 
+from cluster_tunnel import wsl
 from cluster_tunnel.constants import get_version
 from cluster_tunnel.cli.base import BaseCLI
 from cluster_tunnel.cli.configcmd import ConfigCommandsMixin
@@ -151,4 +153,7 @@ def _utf8_console() -> None:
 def main() -> None:
     """Entry point of the ``ctun`` console script."""
     _utf8_console()
+    if wsl.enabled():
+        # wsl.exe writes its own messages as UTF-16 unless asked for UTF-8.
+        os.environ.setdefault("WSL_UTF8", "1")
     cli()

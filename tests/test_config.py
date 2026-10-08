@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from cluster_tunnel import config as cfg
+from cluster_tunnel import wsl
 from cluster_tunnel.config import Cluster
 
 
@@ -113,3 +114,40 @@ def test_no_warnings_when_no_budget(tmp_path: Path) -> None:
     p = _write(tmp_path, "clusters:\n  c:\n    host: h\n    user: u\n")
     config = cfg.load_config(str(p))
     assert cfg.validation_warnings(config, p) == []
+
+
+def test_ssh_config_and_wsl_distro_keys(tmp_path: Path) -> None:
+    p = _write(
+        tmp_path,
+        "defaults:\n  ssh_config: /x/cfg\n  wsl_distro: Ubuntu\n"
+        "clusters:\n  c:\n    host: h\n    ssh_config: /y/cfg\n",
+    )
+    c = cfg.load_config(str(p))
+    assert (c.defaults.ssh_config, c.defaults.wsl_distro) == ("/x/cfg", "Ubuntu")
+    assert c.clusters["c"].ssh_config == "/y/cfg"
+
+
+def test_windows_socket_dir_defaults_inside_wsl(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(wsl, "enabled", lambda: True)
+    c = cfg.load_config(str(_write(tmp_path, "clusters:\n  c:\n    host: h\n")))
+    assert c.defaults.socket_dir == wsl.DEFAULT_SOCKET_DIR
+
+
+_WINDOWS_STYLE = (
+    "defaults:\n  ssh_config: '~/.ssh/config'\n"
+    "clusters:\n  c:\n    host: h\n    identity_file: 'C:\\Users\\me\\.ssh\\id'\n"
+)
+
+
+def test_windows_validation_flags_paths_wsl_cannot_use(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(wsl, "enabled", lambda: True)
+    p = _write(tmp_path, _WINDOWS_STYLE)
+    warnings = cfg.validation_warnings(cfg.load_config(str(p)), p)
+    assert any("identity_file is a Windows path" in w for w in warnings)
+    assert any("does not expand for -F" in w for w in warnings)
+
+
+def test_wsl_path_rules_only_apply_on_windows(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(wsl, "enabled", lambda: False)
+    p = _write(tmp_path, _WINDOWS_STYLE)
+    assert cfg.validation_warnings(cfg.load_config(str(p)), p) == []

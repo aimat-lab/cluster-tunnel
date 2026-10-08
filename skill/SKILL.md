@@ -128,6 +128,9 @@ Tips:
   faster and gentler on the shared filesystem. Details in
   [reference.md](reference.md).
 - Add `--tty` for interactive remote programs that need a pseudo-terminal.
+- On Windows (Git Bash), prefix calls that pass remote `/paths` with
+  `MSYS_NO_PATHCONV=1`, and keep scripts LF; see the Windows section of
+  [reference.md](reference.md).
 - After submitting a job, don't poll `squeue` by hand — set up a live monitor
   that wakes you on state changes and failures: see
   [monitoring-jobs.md](monitoring-jobs.md).
