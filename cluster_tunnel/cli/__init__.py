@@ -6,7 +6,9 @@ entry point. See PLAN.md / DESIGN.md for the overall design.
 
 from __future__ import annotations
 
+import codecs
 import logging
+import sys
 
 import rich_click as click
 
@@ -129,3 +131,24 @@ def create_cli():
 
 
 cli = create_cli()
+
+
+def _utf8_console() -> None:
+    """Switch stdout/stderr to UTF-8 so ctun's output can never fail to encode.
+
+    On Windows, a piped stdout (the usual case when an agent runs ctun) uses the
+    ANSI code page, e.g. cp1252, which cannot encode the logo's block characters:
+    ``ctun --help`` crashed with UnicodeEncodeError before any command ran.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        encoding = getattr(stream, "encoding", None)
+        if not encoding or codecs.lookup(encoding).name == "utf-8":
+            continue
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
+def main() -> None:
+    """Entry point of the ``ctun`` console script."""
+    _utf8_console()
+    cli()

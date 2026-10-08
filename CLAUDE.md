@@ -69,6 +69,7 @@ the Rich-formatted help. One file per command domain:
   you have it installed globally, re-sync the installed copy after editing here.
 - `systemd/` — a systemd **user** service that runs `ctun logout` on shutdown/logout.
 - `tests/` — the pytest suite.
+- `.github/workflows/ci.yml` — CI: the test suite on Ubuntu and Windows.
 
 ## Development
 
@@ -137,3 +138,9 @@ Steps (example shows a **minor** release; use `patch` / `major` as appropriate):
 - Commit messages follow Conventional Commits (`feat(scope):`, `fix:`,
   `docs(scope):`, `chore(release):`, ...).
 - Keep changes tested; add or update tests under `tests/` alongside behavior changes.
+- Pass `encoding="utf-8"` to every text file read/write and to
+  `subprocess.run(..., text=True)`: Windows defaults to cp1252. CI enforces this
+  via `[tool.pytest.ini_options]`; check locally with
+  `PYTHONWARNDEFAULTENCODING=1 uv run pytest -q`.
+- The suite also runs on Windows CI: no POSIX path literals in assertions, and
+  run shell scripts through the `bash` fixture (`tests/conftest.py`).

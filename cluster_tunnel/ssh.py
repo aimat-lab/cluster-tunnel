@@ -119,6 +119,8 @@ def check(spec: ConnSpec) -> subprocess.CompletedProcess:
         ["ssh", *_socket_opts(spec), "-O", "check", spec.target],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
 
 
@@ -137,11 +139,17 @@ def run(spec: ConnSpec, tokens: list[str], *, tty: bool = False) -> int:
 
 
 def capture(spec: ConnSpec, tokens: list[str]) -> subprocess.CompletedProcess:
-    """Run a command over the tunnel and capture its output (no streaming)."""
+    """Run a command over the tunnel and capture its output (no streaming).
+
+    Output is decoded as UTF-8 explicitly: the platform default (cp1252 on most
+    Windows machines) would garble or reject non-ASCII text from the cluster.
+    """
     return subprocess.run(
         ["ssh", *_socket_opts(spec), "-o", "BatchMode=yes", spec.target, shlex.join(tokens)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
 
 
@@ -151,6 +159,8 @@ def close(spec: ConnSpec) -> bool:
         ["ssh", *_socket_opts(spec), "-O", "exit", spec.target],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     return res.returncode == 0
 
@@ -174,6 +184,8 @@ def feed_script(
             stdin=fh,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
 
 

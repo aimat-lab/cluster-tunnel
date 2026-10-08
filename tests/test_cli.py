@@ -38,6 +38,35 @@ def test_version() -> None:
     assert get_version() in r.output
 
 
+def test_utf8_console_reconfigures_legacy_streams(monkeypatch) -> None:
+    # A piped stdout on Windows uses the ANSI code page (cp1252), which cannot
+    # encode the logo's block characters; the streams must end up UTF-8.
+    import io
+    import sys
+
+    import cluster_tunnel.cli as cli_pkg
+
+    out = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+    err = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(sys, "stderr", err)
+    cli_pkg._utf8_console()
+    assert out.encoding == "utf-8" and err.encoding == "utf-8"
+    out.write("█▀▄")  # raised UnicodeEncodeError under cp1252
+    out.flush()
+    assert out.buffer.getvalue() == "█▀▄".encode("utf-8")
+
+
+def test_main_fixes_console_before_running_cli(monkeypatch) -> None:
+    import cluster_tunnel.cli as cli_pkg
+
+    calls: list[str] = []
+    monkeypatch.setattr(cli_pkg, "_utf8_console", lambda: calls.append("console"))
+    monkeypatch.setattr(cli_pkg, "cli", lambda: calls.append("cli"))
+    cli_pkg.main()
+    assert calls == ["console", "cli"]
+
+
 def test_run_requires_command(tmp_path: Path, monkeypatch) -> None:
     _cfg(tmp_path, monkeypatch)
     r = CliRunner().invoke(cli, ["-t", "localhost", "run"])
@@ -98,6 +127,26 @@ def test_logout_without_target_clears_all(tmp_path: Path, monkeypatch) -> None:
     out = _norm(r)
     assert "alpha" in out
     assert "beta" in out
+
+
+def test_fresh_login_replaces_stale_session_and_cmdlog(tmp_path: Path, monkeypatch) -> None:
+    # Without the systemd logout hook (e.g. on Windows), a reboot leaves the old
+    # session and command log behind; the next real login must start both fresh.
+    from cluster_tunnel import cmdlog, paths, session, ssh
+
+    _cfg(tmp_path, monkeypatch)
+    monkeypatch.setattr(paths, "cache_dir", lambda: tmp_path / "cache")
+    session.start("localhost", limit=5.0, unit="units")
+    cmdlog.record("localhost", ["sbatch", "old.sh"])
+
+    live = iter([False, True])  # tunnel down before login, up after it
+    monkeypatch.setattr(ssh, "is_live", lambda spec: next(live))
+    monkeypatch.setattr(ssh, "open_master", lambda spec, verbose=0: 0)
+
+    r = CliRunner().invoke(cli, ["-t", "localhost", "login"])
+    assert r.exit_code == 0, r.output
+    assert session.load("localhost")["limit"] is None  # the stale 5.0 is gone
+    assert cmdlog.summary("localhost")["count"] == 0
 
 
 def test_webui_placeholder(tmp_path: Path, monkeypatch) -> None:

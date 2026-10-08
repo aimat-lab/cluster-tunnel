@@ -5,6 +5,39 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Groundwork for Windows support; the Windows transport itself (via WSL) follows
+separately.
+
+### Added
+
+- CI: GitHub Actions runs the test suite on Ubuntu and Windows. It sets
+  `PYTHONWARNDEFAULTENCODING=1`, and `[tool.pytest.ini_options]` turns the
+  resulting warnings into errors in ctun's own modules, so text I/O that relies
+  on the platform's default encoding fails the build on any OS.
+
+### Fixed
+
+- `ctun --help` (and anything else that prints the logo) no longer crashes with
+  `UnicodeEncodeError` when stdout uses a legacy code page, as a piped stdout
+  does on Windows (cp1252). The `ctun` console script now points at
+  `cluster_tunnel.cli:main`, which switches stdout/stderr to UTF-8 before the
+  CLI starts.
+- Text I/O no longer depends on the platform's default encoding: the config
+  file, the session and command-log files, and captured ssh output are read and
+  written as UTF-8 explicitly.
+- `cluster_tunnel.popup` imports on Windows: `pty` (which needs `termios`) is
+  imported only inside the pty-driven login loop. On Windows the login dialog
+  no longer requires `DISPLAY`/`WAYLAND_DISPLAY` and always runs under the
+  current interpreter.
+- Tests run on Windows: platform-neutral path assertions, shell scripts run
+  through an explicitly resolved bash (Git for Windows' bash, never the WSL
+  launcher) with LF-only fake tools, and the POSIX-only "squeue missing" test
+  is skipped there. New tests cover the fixes above and that a fresh `login`
+  replaces a stale session and command log, which Windows relies on in place
+  of the systemd logout hook.
+
 ## [0.4.0] - 2026-07-18
 
 ### Added

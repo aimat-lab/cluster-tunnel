@@ -318,7 +318,7 @@ Resolution rules:
 
 ```
 cluster-tunnel/
-├── pyproject.toml                    # [project.scripts] ctun = "cluster_tunnel.cli:cli"
+├── pyproject.toml                    # [project.scripts] ctun = "cluster_tunnel.cli:main"
 ├── PLAN.md   DESIGN.md   README.md
 └── src/cluster_tunnel/
     ├── cli/

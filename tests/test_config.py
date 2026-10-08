@@ -39,7 +39,8 @@ def test_requires_password_defaults_true_and_overridable() -> None:
 def test_budget_script_path(tmp_path: Path) -> None:
     cp = tmp_path / "config.yaml"
     assert cfg.budget_script_path(cp, "horeka", None) == tmp_path / "budget" / "horeka.sh"
-    assert cfg.budget_script_path(cp, "horeka", "/abs/x.sh") == Path("/abs/x.sh")
+    absolute = tmp_path / "abs" / "x.sh"  # "/abs/x.sh" is not absolute on Windows
+    assert cfg.budget_script_path(cp, "horeka", str(absolute)) == absolute
     assert cfg.budget_script_path(cp, "horeka", "budget/custom.sh") == tmp_path / "budget" / "custom.sh"
 
 

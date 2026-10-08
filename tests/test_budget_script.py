@@ -30,18 +30,18 @@ _FAKE_SACCT = (
 _START_EPOCH = "1500000000"  # 2017 — before the canned jobs, well after the 2001 floor.
 
 
-def _run(script: Path, tmp_path: Path, awk_bin: str | None) -> str:
+def _run(script: Path, tmp_path: Path, awk_bin: str | None, bash: str) -> str:
     binp = tmp_path / "bin"
     binp.mkdir(exist_ok=True)
     fake = binp / "sacct"
-    fake.write_text(_FAKE_SACCT)
+    fake.write_text(_FAKE_SACCT, encoding="utf-8", newline="\n")  # no CRLF on Windows
     fake.chmod(0o755)
     if awk_bin:  # force the script's `awk` to a specific implementation
         (binp / "awk").symlink_to(awk_bin)
     env = dict(os.environ, PATH=f"{binp}{os.pathsep}{os.environ['PATH']}")
     r = subprocess.run(
-        ["bash", str(script), _START_EPOCH, "cluster", "user"],
-        capture_output=True, text=True, env=env,
+        [bash, str(script), _START_EPOCH, "cluster", "user"],
+        capture_output=True, text=True, encoding="utf-8", env=env,
     )
     assert r.returncode == 0, r.stderr
     return r.stdout.strip()
@@ -57,11 +57,11 @@ def test_template_no_gawk_mktime(script: Path) -> None:
 
 
 @pytest.mark.parametrize("script", SCRIPTS, ids=lambda p: p.name)
-def test_template_computes_job_hours(script: Path, tmp_path: Path) -> None:
-    assert _run(script, tmp_path, None) == "2.000"
+def test_template_computes_job_hours(script: Path, tmp_path: Path, bash: str) -> None:
+    assert _run(script, tmp_path, None, bash) == "2.000"
 
 
 @pytest.mark.skipif(shutil.which("mawk") is None, reason="mawk not installed")
 @pytest.mark.parametrize("script", SCRIPTS, ids=lambda p: p.name)
-def test_template_runs_under_mawk(script: Path, tmp_path: Path) -> None:
-    assert _run(script, tmp_path, shutil.which("mawk")) == "2.000"
+def test_template_runs_under_mawk(script: Path, tmp_path: Path, bash: str) -> None:
+    assert _run(script, tmp_path, shutil.which("mawk"), bash) == "2.000"

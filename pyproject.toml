@@ -25,7 +25,7 @@ dev = [
 ]
 
 [project.scripts]
-ctun = "cluster_tunnel.cli:cli"
+ctun = "cluster_tunnel.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["cluster_tunnel", "cluster_tunnel.*"]
@@ -33,6 +33,12 @@ include = ["cluster_tunnel", "cluster_tunnel.*"]
 [tool.setuptools.package-data]
 "cluster_tunnel" = ["config.example.yaml", "budget_templates/*", "scripts/*", "VERSION"]
 "cluster_tunnel.cli" = ["assets/*"]
+
+[tool.pytest.ini_options]
+# Text I/O that relies on the platform's default encoding breaks on Windows,
+# where it is cp1252 rather than UTF-8. Python only emits EncodingWarning when
+# PYTHONWARNDEFAULTENCODING=1 (set in CI); ctun's own modules then fail on it.
+filterwarnings = ["error::EncodingWarning:cluster_tunnel"]
 
 # Version bumping — keeps pyproject.toml and cluster_tunnel/VERSION in sync.
 # Run e.g. `uv run bump-my-version bump patch` (or minor/major).
