@@ -107,7 +107,7 @@ def load_config(cli_path: str | None = None) -> Config:
         raise FileNotFoundError(
             f"No config at {path}. Run `ctun config --init` to create one."
         )
-    raw = yaml.safe_load(path.read_text()) or {}
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     config = Config(**raw)
     if not config.defaults.socket_dir:
         config.defaults.socket_dir = str(paths.socket_dir())

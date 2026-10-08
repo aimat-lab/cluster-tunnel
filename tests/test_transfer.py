@@ -25,7 +25,7 @@ def test_upload_argv_basic() -> None:
     # -e carries the control socket + non-master + batch options.
     e = argv[argv.index("-e") + 1]
     assert e.startswith("ssh ")
-    assert "ControlPath=/sock/k" in e
+    assert f"ControlPath={_spec().socket}" in e  # \sock\k on Windows
     assert "ControlMaster=no" in e
     assert "BatchMode=yes" in e
 

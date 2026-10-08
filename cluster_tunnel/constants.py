@@ -12,7 +12,7 @@ VERSION_PATH = pathlib.Path(__file__).parent / "VERSION"
 
 def get_version() -> str:
     """Return the package version, read from the bundled ``VERSION`` file."""
-    return VERSION_PATH.read_text().strip()
+    return VERSION_PATH.read_text(encoding="utf-8").strip()
 
 
 #: appdirs identifiers for ~/.config/cluster-tunnel and ~/.cache/cluster-tunnel.

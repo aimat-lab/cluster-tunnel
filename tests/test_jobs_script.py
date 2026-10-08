@@ -12,7 +12,10 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 SCRIPT = Path(__file__).resolve().parent.parent / "cluster_tunnel" / "scripts" / "jobs.sh"
 
@@ -42,42 +45,45 @@ def _bin(tmp_path: Path) -> Path:
     binp.mkdir(exist_ok=True)
     for name, body in (("squeue", _FAKE_SQUEUE), ("sacct", _FAKE_SACCT)):
         f = binp / name
-        f.write_text(body)
+        f.write_text(body, encoding="utf-8", newline="\n")  # no CRLF on Windows
         f.chmod(0o755)
     return binp
 
 
-def _run(tmp_path: Path, since_minutes: str) -> str:
+def _run(tmp_path: Path, since_minutes: str, bash: str) -> str:
     binp = _bin(tmp_path)
     env = dict(os.environ, PATH=f"{binp}{os.pathsep}{os.environ['PATH']}")
     r = subprocess.run(
-        ["bash", str(SCRIPT), "someuser", since_minutes],
-        capture_output=True, text=True, env=env,
+        [bash, str(SCRIPT), "someuser", since_minutes],
+        capture_output=True, text=True, encoding="utf-8", env=env,
     )
     assert r.returncode == 0, r.stderr
     return r.stdout
 
 
-def test_active_jobs_always_listed(tmp_path: Path) -> None:
-    out = _run(tmp_path, "60")
+def test_active_jobs_always_listed(tmp_path: Path, bash: str) -> None:
+    out = _run(tmp_path, "60", bash)
     assert "active|966737|RUNNING|14:44|7:00:00|booster|1|train job" in out
     assert "active|966738|PENDING|0:00|7:00:00|booster|1|eval" in out
 
 
-def test_finished_window_filters_by_end(tmp_path: Path) -> None:
-    out = _run(tmp_path, "60")
+def test_finished_window_filters_by_end(tmp_path: Path, bash: str) -> None:
+    out = _run(tmp_path, "60", bash)
     assert "done|1001|COMPLETED" in out       # ended 10 min ago -> inside window
     assert "1002" not in out                  # ended 100 min ago -> outside window
     assert "1003" not in out                  # still running (End=Unknown) -> skipped
 
 
-def test_since_zero_skips_accounting(tmp_path: Path) -> None:
-    out = _run(tmp_path, "0")
+def test_since_zero_skips_accounting(tmp_path: Path, bash: str) -> None:
+    out = _run(tmp_path, "0", bash)
     assert "active|966737" in out             # live queue still shown
     assert "done|" not in out                 # sacct never consulted
 
 
-def test_squeue_missing_exits_nonzero(tmp_path: Path) -> None:
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="needs symlinks and a PATH of POSIX tools only"
+)
+def test_squeue_missing_exits_nonzero(tmp_path: Path, bash: str) -> None:
     # A PATH with coreutils but no squeue makes the probe refuse (exit 3) rather
     # than silently report an empty queue.
     binp = tmp_path / "onlycore"
@@ -88,10 +94,10 @@ def test_squeue_missing_exits_nonzero(tmp_path: Path) -> None:
         if src:
             (binp / tool).symlink_to(src)
     env = dict(os.environ, PATH=str(binp))
-    bash = shutil.which("bash") or "/bin/bash"  # absolute: the restricted PATH lacks it
+    # `bash` is an absolute path, which matters: the restricted PATH lacks it.
     r = subprocess.run(
         [bash, str(SCRIPT), "someuser", "60"],
-        capture_output=True, text=True, env=env,
+        capture_output=True, text=True, encoding="utf-8", env=env,
     )
     assert r.returncode == 3
     assert "squeue not found" in r.stderr

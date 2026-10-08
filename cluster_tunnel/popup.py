@@ -18,8 +18,6 @@ from __future__ import annotations
 import functools
 import json
 import os
-import pty
-import select
 import shutil
 import subprocess
 import sys
@@ -178,8 +176,14 @@ class Credentials:
 
 
 def _candidate_pythons() -> list[str]:
+    # Windows has no system python3, and a bare `python3` on PATH may be the
+    # Microsoft Store stub; the running interpreter ships a working Tk there.
+    if sys.platform == "win32":
+        cands: tuple[Optional[str], ...] = (sys.executable,)
+    else:
+        cands = ("/usr/bin/python3", shutil.which("python3"), sys.executable)
     out: list[str] = []
-    for cand in ("/usr/bin/python3", shutil.which("python3"), sys.executable):
+    for cand in cands:
         if cand and cand not in out and os.path.exists(cand):
             out.append(cand)
     return out
@@ -199,8 +203,14 @@ def _dialog_python() -> Optional[str]:
 
 
 def gui_available() -> bool:
-    """True if a tkinter dialog can be shown (a display and a working Tk exist)."""
-    if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+    """True if a tkinter dialog can be shown (a display and a working Tk exist).
+
+    X11/Wayland sessions advertise their display in the environment; Windows has
+    no such variable, as Tk draws on the desktop directly.
+    """
+    if sys.platform != "win32" and not (
+        os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+    ):
         return False
     return _dialog_python() is not None
 
@@ -235,7 +245,7 @@ def prompt_credentials(
         "1" if requires_otp else "0",
         "1" if requires_password else "0",
     ]
-    res = subprocess.run(args, capture_output=True, text=True)
+    res = subprocess.run(args, capture_output=True, text=True, encoding="utf-8")
     if res.returncode != 0 or not res.stdout.strip():
         return None
     try:
@@ -285,6 +295,11 @@ def login_with_password(
     unanswered (for clusters that do not use one). With ``verbose`` > 0, ssh's own
     diagnostics are captured and printed to stderr if the login fails.
     """
+    # Imported here, not at module level: `pty` needs termios, which Windows
+    # lacks, and the rest of this module (the dialog) must import everywhere.
+    import pty
+    import select
+
     spec.socket.parent.mkdir(parents=True, exist_ok=True)
     ssh.ensure_clean_socket(spec)
     argv = ssh.open_master_argv(spec, verbose)

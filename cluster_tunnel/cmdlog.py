@@ -24,7 +24,7 @@ def record(name: str, command: list[str]) -> None:
     """Append one command (with a timestamp) to the cluster's log."""
     paths.cmdlog_dir().mkdir(parents=True, exist_ok=True)
     entry = {"epoch": int(time.time()), "command": list(command)}
-    with _log_file(name).open("a") as fh:
+    with _log_file(name).open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry) + "\n")
 
 
@@ -36,7 +36,7 @@ def summary(name: str) -> dict:
     count = 0
     last_epoch: Optional[int] = None
     try:
-        for line in f.read_text().splitlines():
+        for line in f.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
             count += 1
@@ -56,7 +56,7 @@ def entries(name: str) -> list[dict]:
         return []
     out: list[dict] = []
     try:
-        for line in f.read_text().splitlines():
+        for line in f.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
             try:

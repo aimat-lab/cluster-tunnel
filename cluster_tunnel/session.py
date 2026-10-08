@@ -28,7 +28,7 @@ def start(name: str, *, limit: Optional[float], unit: str) -> dict:
         "limit": limit,
         "unit": unit,
     }
-    _session_file(name).write_text(json.dumps(data, indent=2))
+    _session_file(name).write_text(json.dumps(data, indent=2), encoding="utf-8")
     return data
 
 
@@ -38,7 +38,7 @@ def load(name: str) -> Optional[dict]:
     if not f.exists():
         return None
     try:
-        return json.loads(f.read_text())
+        return json.loads(f.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return None
 

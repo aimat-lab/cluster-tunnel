@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 
 from cluster_tunnel import popup
 from cluster_tunnel.popup import Credentials
@@ -96,3 +97,35 @@ def test_looks_like_prompt() -> None:
     assert popup._looks_like_prompt(b"user@host's password: ")
     assert popup._looks_like_prompt(b"Verification code:")
     assert not popup._looks_like_prompt(b"Last login: yesterday on tty1")
+
+
+def test_imports_without_pty() -> None:
+    # Windows has no `pty` (it needs termios). The dialog half of this module must
+    # still import there, so pty may only be imported inside the login loop.
+    code = "import sys; sys.modules['pty'] = None; import cluster_tunnel.popup"
+    r = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, encoding="utf-8"
+    )
+    assert r.returncode == 0, r.stderr
+
+
+def test_gui_available_on_windows_needs_no_display(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.setattr(popup, "_dialog_python", lambda: sys.executable)
+    assert popup.gui_available()
+
+
+def test_gui_available_on_linux_needs_a_display(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.setattr(popup, "_dialog_python", lambda: sys.executable)
+    assert not popup.gui_available()
+
+
+def test_windows_dialog_uses_running_interpreter(monkeypatch) -> None:
+    # No /usr/bin/python3 on Windows, and a PATH `python3` may be the Store stub.
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert popup._candidate_pythons() == [sys.executable]
