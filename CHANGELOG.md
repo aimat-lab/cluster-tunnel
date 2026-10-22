@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.0] - 2026-10-22
 
 ### Added
 
@@ -17,33 +17,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SLURM_CLUSTER_NAME` (`null` when unknown), so a front end can match a job to
   tags like `slurm:<ClusterName>:<job id>`.
 - **The job IDs a command submitted.** The command log keeps the IDs of the jobs
-  each `ctun run` submitted (every `Submitted batch job <N>` line of its output).
-  `ctun logs` shows them after the command (`→ job 4818213`), `ctun logs --json`
-  gives them as `job_ids`, and `api.run()` returns them in `Result.job_ids`. The
-  output still streams as it arrives, and each ID is logged as soon as it is
-  printed, so `sbatch --wait` and an interrupted run keep theirs. Any such line
-  counts, so `run -- cat submit.log` logs the old IDs in it; `sbatch --parsable`
-  prints none, and the ID of a `sbatch -M <other>` job belongs to that cluster,
-  not to `slurm_cluster`. A `--tty` run logs none: ctun does not see its output.
-  Older logs still read.
+  each `ctun run` submitted (every `Submitted batch job <N>` line of its
+  output). `ctun logs` shows them after the command (`→ job 4818213`), `ctun
+  logs --json` gives them as `job_ids`, and `api.run()` returns them in
+  `Result.job_ids`. The output still streams as it arrives, and each ID is
+  logged as soon as it is printed, so `sbatch --wait` and an interrupted run
+  keep theirs. Any such line counts, so `run -- cat submit.log` logs the old IDs
+  in it; `sbatch --parsable` prints none, and the ID of a `sbatch -M <other>`
+  job belongs to that cluster, not to `slurm_cluster`. A `--tty` run logs none:
+  ctun does not see its output. Older logs still read.
 - **Job records.** For each `Submitted batch job <N>` in its output, `ctun run`
-  stores a record on the cluster in
-  `~/.ctun/jobs/<Slurm ClusterName>/<N>.json`, so every machine sees it (not for
-  a job Slurm took before the command started, as in `cat submit.log`). It holds
-  the new optional `--project` and `--note` (`api.run(project=, note=)`), and
-  facts ctun collects itself: job name and working directory from Slurm, and the
-  git commit, branch, pushed state and uncommitted files there at submit time
-  (at most 100 files, and `uncommitted_omitted` counting the rest). A
-  failing fact only warns (`Result.warnings`). `ctun jobs --json`
-  (`api.jobs(with_records=True)`) attaches each job's `record` (the tasks of an
-  array share the array's) and lists
-  `records_without_job` per cluster. Turn it off per cluster with
+  stores a record on the cluster in `~/.ctun/jobs/<Slurm ClusterName>/<N>.json`,
+  so every machine sees it (not for a job Slurm took before the command started,
+  as in `cat submit.log`). It holds the new optional `--project` and `--note`
+  (`api.run(project=, note=)`), and facts ctun collects itself: job name and
+  working directory from Slurm, and the git commit, branch, pushed state and
+  uncommitted files there at submit time (at most 100 files, and
+  `uncommitted_omitted` counting the rest). A failing fact only warns
+  (`Result.warnings`). `ctun jobs --json` (`api.jobs(with_records=True)`)
+  attaches each job's `record` (the tasks of an array share the array's) and
+  lists `records_without_job` per cluster. Turn it off per cluster with
   `job_records: false`.
 - **Checked references in notes.** `ctun run --note` checks its `job:<id>`
-  references on the cluster before running, and refuses with the new exit code 13
-  (`note_reference_invalid`, `api.NoteReferenceInvalid`) if one is unknown. Its
-  `commit:<hash>` references are checked once the jobs are submitted, in their
-  own repos and those of the project's earlier records; an unknown one only warns.
+  references on the cluster before running, and refuses with the new exit code
+  13 (`note_reference_invalid`, `api.NoteReferenceInvalid`) if one is unknown.
+  Its `commit:<hash>` references are checked once the jobs are submitted, in
+  their own repos and those of the project's earlier records; an unknown one
+  only warns.
 - **Editing a job's project and note.** `ctun -t <cluster> jobs edit <id>...`
   with `--project`, `--note` or `--confirm-note` (`api.edit_job()`, and
   `api.edit_jobs()` for several) gives one or more jobs' records the same change
@@ -53,39 +53,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   record's `changes` as old and new value; the facts from submit time are never
   changed. For a job that has no record (e.g. one submitted with plain
   `sbatch`), `jobs edit` creates one without facts, so older jobs can join
-  projects too. Records gain `note_confirmed` and `changes`. `ctun jobs list`
+  projects too, and a task of an array gets a copy of the array's record. With
+  several IDs every job is checked first, so an unknown job or reference changes
+  none of them. Records gain `note_confirmed` and `changes`. `ctun jobs list`
   names the overview next to `jobs edit`; plain `ctun jobs` works as before.
 - **Projects of all time.** `ctun projects list` (`api.projects()`) lists every
   project in the job records of each live cluster, however old, with its number
-  of jobs; `--json` for front ends such as the VS Code extension's Projects view.
-  A cluster configured without records is marked `"job_records": false`.
-- **Renaming a project.** `ctun projects rename OLD NEW` (`api.rename_project()`)
-  renames a project in every job record of each live cluster, with the projects
-  nested in it (`htfm/mh` → `archive/htfm/mh`). Each change is logged in the
-  record like `jobs edit`, and the records go back a few dozen per SSH call
-  (`records.sh update` takes several records). A record another machine edits
-  meanwhile is renamed again from its new state, not overwritten; `jobs edit`
-  does the same. If storing fails partway, `renamed` still lists what was stored.
+  of jobs; `--json` for front ends such as the VS Code extension's Projects
+  view. A cluster configured without records is marked `"job_records": false`,
+  with `"live": null` (not checked).
+- **Renaming a project.** `ctun projects rename OLD NEW`
+  (`api.rename_project()`) renames a project in every job record of each live
+  cluster, with the projects nested in it (`htfm/mh` → `archive/htfm/mh`). Each
+  change is logged in the record like `jobs edit`, and the records go back a few
+  dozen per SSH call (`records.sh update` takes several records). A record
+  another machine edits meanwhile is renamed again from its new state, not
+  overwritten; `jobs edit` does the same. If storing fails partway, `renamed`
+  still lists what was stored. It exits 1 when the rename failed, and 10 with
+  `-t` when the tunnel is down. Running it again is safe, also when NEW lies
+  inside OLD (`htfm` → `htfm/old`). Project names lose a `/` or blanks at either
+  end wherever they are stored (`archive/` is `archive`).
 - **Credentials on stdin.** `ctun login --credentials-stdin` reads the password,
   OTP and session limit as JSON on stdin and logs in with them, as
-  `api.login(credentials=...)` does: for front ends such as the VS Code extension,
-  whose own input boxes ask the human.
+  `api.login(credentials=...)` does: for front ends such as the VS Code
+  extension, whose own input boxes ask the human.
 - **`login -i` through a front end.** `ctun login -i` hands the login to the
   front end that started it, such as a VS Code window with the ctun extension,
   when that names its local pipe in `CTUN_LOGIN_BRIDGE`; so does
   `api.login(interactive=True)`, whose `LoginResult.bridged` says so. The front
-  end asks for the secrets and logs in itself with
-  `ctun --config <config> login --credentials-stdin`, using the config file the
-  request names; only the outcome comes back, and ctun checks that the tunnel is
-  really up. `--timeout` bounds the wait. Without the variable, or if the front
-  end declines or is gone, the popup opens as before.
+  end asks for the secrets and logs in itself with `ctun --config <config> login
+  --credentials-stdin`, using the config file the request names; only the
+  outcome comes back, and ctun checks that the tunnel is really up. `--timeout`
+  bounds the wait. Without the variable, or if the front end declines or is
+  gone, the popup opens as before.
 
 ### Changed
 
 - **`ctun run` options go before the command.** ctun's own options end at the
   command's first word, so `ctun run python train.py --note x` passes `--note x`
-  to `train.py` instead of taking it as the job's note. So does a `--tty` or `-n`
-  after the command: write `ctun run --tty -- htop`, not `ctun run htop --tty`.
+  to `train.py` instead of taking it as the job's note. So does a `--tty` or
+  `-n` after the command: write `ctun run --tty -- htop`, not `ctun run htop
+  --tty`.
 
 ## [0.8.0] - 2026-10-20
 
