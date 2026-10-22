@@ -1,10 +1,13 @@
-"""Job overview across clusters: jobs."""
+"""Your jobs: the overview across clusters (jobs, jobs list) and changing their records (jobs edit)."""
 
 from __future__ import annotations
 
 import re
 
 import rich_click as click
+from click.core import ParameterSource
+
+from cluster_tunnel.cli.errors import fail
 
 #: `--since` duration units expressed in minutes. A bare number is minutes.
 _SINCE_UNITS = {"m": 1, "h": 60, "d": 60 * 24, "w": 60 * 24 * 7}
@@ -55,17 +58,26 @@ def _state_style(state: str) -> str:
     return "white"
 
 
-class JobsCommandsMixin:
-    """Mixin providing the `jobs` command."""
+_SINCE_OPTION = click.option(
+    "-s", "--since", "since", default="24h", metavar="DURATION",
+    help="Finished-job history window (e.g. 24h, 90m, 2d; 0 = active only).",
+)
+_JSON_OPTION = click.option("-j", "--json", "as_json", is_flag=True, help="Machine-readable JSON output.")
 
-    @click.command("jobs")
-    @click.pass_obj
-    @click.option(
-        "-s", "--since", "since", default="24h", metavar="DURATION",
-        help="Finished-job history window (e.g. 24h, 90m, 2d; 0 = active only).",
-    )
-    @click.option("-j", "--json", "as_json", is_flag=True, help="Machine-readable JSON output.")
-    def jobs_command(self, since: str, as_json: bool) -> None:
+
+def _given(ctx: click.Context, *names: str) -> bool:
+    """True if any of the options ``names`` was given on the command line (not left at its default)."""
+    return any(ctx.get_parameter_source(name) is not ParameterSource.DEFAULT for name in names)
+
+
+class JobsCommandsMixin:
+    """Mixin providing the `jobs` group: the overview (`jobs`, `jobs list`) and `jobs edit`."""
+
+    @click.group("jobs", invoke_without_command=True)
+    @click.pass_context
+    @_SINCE_OPTION
+    @_JSON_OPTION
+    def jobs_command(ctx: click.Context, since: str, as_json: bool) -> None:
         """Show your Slurm jobs on the cluster(s): running, pending, recently finished.
 
         With a target (`-t <cluster>`), reports that cluster; without one, sweeps
@@ -73,8 +85,74 @@ class JobsCommandsMixin:
         are noted, never logged in to). For each cluster a bundled probe runs
         `squeue` (your running + pending jobs) and, unless `--since 0`, `sacct`
         (jobs that finished within the window) on the login node over the live
-        tunnel — read-only, so it is never budget-guarded.
+        tunnel — read-only, so it is never budget-guarded. `--json` includes
+        each job's record. `jobs list` does the same; `jobs edit` changes a
+        job's project or note.
         """
+        if ctx.invoked_subcommand is None:
+            ctx.obj._list_jobs(since, as_json)
+        elif ctx.invoked_subcommand == "edit" and _given(ctx, "since", "as_json"):
+            raise click.UsageError("`jobs edit` takes no --since or --json; it always prints JSON.")
+
+    @jobs_command.command("list")
+    @click.pass_context
+    @_SINCE_OPTION
+    @_JSON_OPTION
+    def jobs_list_command(ctx: click.Context, since: str, as_json: bool) -> None:
+        """List your Slurm jobs, as plain `ctun jobs` does."""
+        # `ctun jobs --json list` means `ctun jobs list --json`; list's own options win.
+        group = ctx.parent
+        if not _given(ctx, "since"):
+            since = group.params["since"]
+        ctx.obj._list_jobs(since, as_json or group.params["as_json"])
+
+    @jobs_command.command("edit")
+    @click.pass_obj
+    @click.argument("job_ids", nargs=-1, required=True, metavar="JOB_ID...")
+    @click.option("--project", default=None, help='New project; "" for Unassigned.')
+    @click.option("--note", default=None, help='New note, unconfirmed until --confirm-note; "" removes it.')
+    @click.option("--confirm-note", is_flag=True, help="Confirm the note: a human has reviewed it.")
+    def jobs_edit_command(
+        self, job_ids: tuple[str, ...], project: str | None, note: str | None, confirm_note: bool
+    ) -> None:
+        """Give one or more jobs the same project or note.
+
+        Each change is stored in the job's record on the cluster, so every
+        machine sees it. Prints the resulting records as JSON. Stops at the first
+        job that fails; running the command again is safe.
+
+        Example: ctun -t haicore jobs edit 51319 51322 --project htfm/mh
+        """
+        import json
+
+        from cluster_tunnel import api
+
+        if project is None and note is None and not confirm_note:
+            raise click.UsageError("Give --project, --note or --confirm-note.")
+
+        config = self.load_config()
+        name, _ = self.resolve_cluster(config)
+        results = []
+        for job_id in job_ids:
+            try:
+                edit = api.edit_job(
+                    name, job_id, project=project, note=note, confirm_note=confirm_note,
+                    config=config, config_path=self.config_path,
+                )
+            except api.LoginRequired as exc:
+                fail(str(exc), exc.exit_code)
+            except api.NoteReferenceInvalid as exc:
+                fail(f"Not saved: {exc}.", exc.exit_code)
+            except api.RecordError as exc:
+                raise click.ClickException(str(exc)) from exc
+            if edit.changed:
+                click.secho(f"ctun: updated job {job_id}", fg="bright_black", err=True)
+            else:
+                click.secho(f"ctun: job {job_id} already has these values", fg="bright_black", err=True)
+            results.append(edit.record)
+        click.echo(json.dumps(results, indent=2, ensure_ascii=False))
+
+    def _list_jobs(self, since: str, as_json: bool) -> None:
         from cluster_tunnel import api
 
         since_minutes = _parse_since(since)
@@ -86,7 +164,8 @@ class JobsCommandsMixin:
         results = [
             entry.as_dict()
             for entry in api.jobs(
-                self.target or None, since_minutes=since_minutes, config=config, config_path=self.config_path
+                self.target or None, since_minutes=since_minutes, with_records=as_json,
+                config=config, config_path=self.config_path,
             )
         ]
 

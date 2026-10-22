@@ -9,6 +9,7 @@ workflow and golden rules, see [SKILL.md](SKILL.md).
 - Invocation shape and global options
 - `status` — tunnel + session state
 - `jobs` — Slurm job overview
+- `jobs edit` — change jobs' project or note
 - `info` — cluster briefing
 - `note` — record a fact about a cluster (after the user approves)
 - `login` — authenticate and open the tunnel
@@ -65,6 +66,8 @@ ctun jobs --since 0          # live queue only (no finished jobs)
 ctun -t <cluster> jobs -j    # machine-readable JSON
 ```
 
+`ctun jobs list` is the same command, named next to `jobs edit`.
+
 A quick overview of **your** jobs — running and pending (from `squeue`), plus
 jobs that **finished recently** (from `sacct`, within `-s/--since`, default
 `24h`; `--since 0` skips them). Without `-t` it sweeps every configured cluster
@@ -81,7 +84,35 @@ of a *single* job as it changes state, use `Monitor` (see
 
 With `--json`, each cluster entry names its `slurm_cluster`: Slurm's own
 `ClusterName`, which jobs see as `SLURM_CLUSTER_NAME` (`null` when unknown or the
-tunnel is down).
+tunnel is down). Each job carries its `record` (see [Job records](#job-records), or
+`null`; the tasks of an array share the array's record, unless `jobs edit` gave
+a task its own), and each cluster entry lists `records_without_job`: records written or
+changed in the window whose job is no longer listed. `records_error` reports a
+failure to read the records; the jobs are still listed.
+
+## `jobs edit` — change jobs' project or note
+
+```
+ctun -t <cluster> jobs edit <id> --project htfm/mh --note "…"   # change project and note
+ctun -t <cluster> jobs edit <id> <id>... --project htfm/new     # the same change for several jobs
+ctun -t <cluster> jobs edit <id> --project "" --note ""         # clear: Unassigned, no note
+ctun -t <cluster> jobs edit <id> --confirm-note                 # the human confirmed the note
+```
+
+Changes each job's [record](#job-records) on the cluster, so every machine and
+front end sees the change, and prints the resulting records as a JSON list. With
+several jobs it stops at the first that fails; the jobs before it keep their
+change, and running the fixed command again leaves them as they are. To read
+records without changing them, use `jobs --json`; widen `--since` for older
+jobs. A `/` in a project nests it. A new note is unconfirmed until
+`--confirm-note`, and its references are checked as in `run`, commits in the
+job's own repo too; an unknown one refuses the edit (exit code 13).
+Each edit appends `{at, from, <field>: [old, new]}` to the record's `changes`;
+the facts from submit time are never changed. A job that has no record yet
+(e.g. one submitted with plain `sbatch`) gets one without facts; ctun refuses a
+job that Slurm doesn't know.
+
+**Only change a job after the user's explicit yes** to the exact command.
 
 ## `info` — cluster briefing
 
@@ -159,10 +190,12 @@ ctun -t <cluster> hostkey --pin [-y|--yes]
 ## `run` — run a command through the tunnel
 
 ```
-ctun -t <cluster> run [--tty] [-n|--dry-run] -- <command> [args...]
+ctun -t <cluster> run [--tty] [-n|--dry-run] [--project NAME] [--note TEXT] -- <command> [args...]
 ```
 
 - Everything after `--` is forwarded to the cluster **exactly as written**.
+  ctun's own options (`--tty`, `-n`, `--project`, `--note`) go before the
+  command: after its first word, every option belongs to the command.
 - The remote command's **exit code is propagated** as `ctun`'s exit code;
   output streams live.
 - `--tty`: allocate a pseudo-terminal for interactive remote programs.
@@ -177,6 +210,44 @@ budget to stderr before the command's own output, so it never pollutes stdout.
 ```
 ctun -t haicore run -- squeue --me
 ctun -t haicore run -- bash -c 'cd $WORK && sbatch job.sh'
+```
+
+### Job records
+
+For every `Submitted batch job <N>` line in the output, `run` stores a
+**job record** on the cluster, in `~/.ctun/jobs/<Slurm ClusterName>/<N>.json`,
+unless Slurm took job `<N>` before the command started (`run -- cat submit.log`
+prints old IDs; they get no record).
+Every machine that submits to that cluster sees the same records. It holds:
+
+- `--project NAME` and `--note TEXT`, if given (both optional);
+- facts ctun collects itself, never from you: the job's name and working
+  directory (from Slurm), and the git state there at submit time (`commit`,
+  `branch`, `pushed`, `uncommitted` files: at most 100, with
+  `uncommitted_omitted` counting the rest), plus the command, the submitting
+  host and the time;
+- `note_confirmed`, true once the human confirmed the note, and `changes`, the
+  log of later edits (see [`jobs edit`](#jobs-edit--change-jobs-project-or-note)).
+
+The project and note can be changed later with `ctun jobs edit`; the facts never.
+
+A fact ctun cannot read is stored as `null` with a warning; it never blocks the
+submission. The command's output and exit code are unchanged. Records are off
+with `--tty` (the output is not read) and for a cluster with
+`job_records: false` in the config.
+
+**Notes are drafts for the human.** Put only facts from this session into
+`--note` (what changed and why), never guesses about results. Refer to a commit
+as `commit:<hash>` and to a job as `job:<id>`. ctun checks each job reference
+before it runs the command, and refuses the run with exit code 13
+(`ctun-error: note_reference_invalid`) if one cannot be found. Commit references
+are checked after the submission, in the new job's repo and in those of the
+project's earlier records; one that cannot be found is stored as written, with a
+warning on stderr: fix it with `jobs edit --note`. When unsure, leave the note
+out.
+
+```
+ctun -t haicore run --project htfm --note "lr 1e-3 after commit:541b4cb, rerun of job:1695485" -- bash -c 'cd $REPO && ./submit.sh'
 ```
 
 ## `upload` / `download` — transfer files over the tunnel

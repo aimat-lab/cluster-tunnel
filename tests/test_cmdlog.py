@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -70,6 +71,7 @@ def _patch_run(monkeypatch, output: str) -> None:
         return 0
 
     monkeypatch.setattr("cluster_tunnel.ssh.run", fake_run)
+    monkeypatch.setattr("cluster_tunnel.ssh.feed_script", lambda *a, **k: subprocess.CompletedProcess([], 0, "", ""))
 
 
 def test_run_logs_the_job_ids_it_submitted(tmp_path: Path, monkeypatch) -> None:

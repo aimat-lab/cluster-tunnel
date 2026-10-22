@@ -297,7 +297,8 @@ $ ctun -t horeka run [--tty] [-n|--dry-run] -- <command> [args…]
 ```
 
 - Everything after `--` is forwarded to the cluster exactly as written, so flags like
-  `--me` or `--time=01:00:00` pass straight through.
+  `--me` or `--time=01:00:00` pass straight through. `ctun`'s own options go before the
+  command: after its first word, every option belongs to the command, `--` or not.
 - The command's **exit code is propagated** as `ctun`'s exit code, and output is streamed
   live.
 - `--tty` allocates a pseudo-terminal for interactive remote programs.
@@ -323,6 +324,7 @@ reserved for ctun's pre-flight failures:
 | `10` | `login_required` | No live tunnel — run `login` again. |
 | `11` | `budget_exhausted` | A guarded command was blocked: session usage is at/over the limit. |
 | `12` | `budget_guard_error` | A guarded command was blocked because the budget could not be verified (fail-closed). |
+| `13` | `note_reference_invalid` | `run --note` names a `job:<id>` the cluster does not know; nothing ran. (`jobs edit --note` also for a `commit:<hash>`; nothing was saved.) |
 | *N* | — | The remote command's **own** exit code (0–255), propagated unchanged. |
 | `2` | — | Usage error (e.g. no command after `--`). |
 
@@ -565,9 +567,10 @@ except api.BudgetBlocked as exc:  # BudgetExhausted or BudgetGuardError
 | Function | Does what |
 |---|---|
 | `login`, `logout`, `status`, `is_live` | `ctun login`, `logout`, `status`; the tunnel state. `login(credentials=api.Credentials(password, otp))` takes a password and OTP from the program's own prompt instead of the terminal or the dialog |
-| `run`, `preflight` | `ctun run` (streamed, or `capture=True` with an optional `timeout`) and `run -n` |
+| `run`, `preflight` | `ctun run` (streamed, or `capture=True` with an optional `timeout`) and `run -n`; `project=`/`note=` go into the job records, and the `Result` lists the submitted `job_ids` and the `records` written |
 | `upload`, `download` | `ctun upload`, `download` (optionally `capture=True`) |
-| `jobs` | `ctun jobs` |
+| `jobs` | `ctun jobs`; `with_records=True` also reads each job's record |
+| `edit_job` | `ctun jobs edit` for one job: a new project or note in its record |
 | `host_key`, `pin_host_key` | `ctun hostkey`, `hostkey --pin`; pins only the fingerprint passed in, and replaces a trusted key only with `replace=True` |
 | `budget` | The guard's verdict for any submission right now, probed over the tunnel |
 | `feed_script` | Runs a local bash script on the login node; not guarded, for read-only probes |
@@ -588,7 +591,7 @@ except api.LoginError as exc:
 
 Failures raise `api.ClusterTunnelError` subclasses. The ones `ctun` reports with a stable
 exit code carry it as `exit_code` and `marker`: `LoginRequired` (10), `BudgetExhausted`
-(11) and `BudgetGuardError` (12). Each function reads the same config as `ctun`
+(11), `BudgetGuardError` (12) and `NoteReferenceInvalid` (13). Each function reads the same config as `ctun`
 (`config_path=`, else `$CTUN_CONFIG`, else the default location) and, like `ctun`, must
 run on the machine that holds the tunnel. `cluster_tunnel.api` and `cluster_tunnel.errors`
 are the public interface and follow semantic versioning.

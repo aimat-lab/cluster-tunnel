@@ -488,6 +488,7 @@ def _patch_jobs(monkeypatch, *, live=True, jobs=None, error=None) -> None:
         return Overview("haic", jobs or [])
 
     monkeypatch.setattr("cluster_tunnel.jobs.query", fake_query)
+    monkeypatch.setattr("cluster_tunnel.records.list_recent", lambda spec, since, ids: [])
 
 
 def test_jobs_renders_table(tmp_path: Path, monkeypatch) -> None:

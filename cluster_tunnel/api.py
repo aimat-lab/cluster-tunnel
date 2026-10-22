@@ -26,6 +26,7 @@ Example::
 
 from __future__ import annotations
 
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Optional, Sequence, Union
@@ -35,9 +36,12 @@ import yaml
 from cluster_tunnel import budget as budget_mod
 from cluster_tunnel import cmdlog, configedit
 from cluster_tunnel import config as config_mod
+from cluster_tunnel import facts as facts_mod
 from cluster_tunnel import hostkey as hostkey_mod
 from cluster_tunnel import jobs as jobs_mod
+from cluster_tunnel import notes as notes_mod
 from cluster_tunnel import popup, session, ssh, wsl
+from cluster_tunnel import records as records_mod
 from cluster_tunnel import transfer as transfer_mod
 from cluster_tunnel.budget import Decision
 from cluster_tunnel.config import Cluster, Config
@@ -50,6 +54,8 @@ from cluster_tunnel.errors import (
     HostKeyError,
     LoginError,
     LoginRequired,
+    NoteReferenceInvalid,
+    RecordError,
     TransportError,
     UnknownClusterError,
     budget_blocked,
@@ -57,20 +63,21 @@ from cluster_tunnel.errors import (
 from cluster_tunnel.hostkey import HostKey
 from cluster_tunnel.jobs import Job
 from cluster_tunnel.popup import Credentials
+from cluster_tunnel.records import JobRecord
 from cluster_tunnel.ssh import ConnSpec
 
 __all__ = [
     # operations
     "load_config", "clusters", "connection", "is_live", "status", "login", "logout",
-    "preflight", "budget", "run", "feed_script", "upload", "download", "jobs",
+    "preflight", "budget", "run", "feed_script", "upload", "download", "jobs", "edit_job",
     "host_key", "pin_host_key",
     # results and inputs
     "Credentials", "Result", "ClusterStatus", "ClusterJobs", "LoginResult", "LogoutResult", "HostKeyStatus",
-    "Decision", "Job", "HostKey", "ConnSpec", "Config", "Cluster",
+    "RecordEdit", "Decision", "Job", "JobRecord", "HostKey", "ConnSpec", "Config", "Cluster",
     # errors
     "ClusterTunnelError", "ConfigError", "UnknownClusterError", "LoginRequired",
     "LoginError", "BudgetBlocked", "BudgetExhausted", "BudgetGuardError", "TransportError",
-    "HostKeyError",
+    "HostKeyError", "NoteReferenceInvalid", "RecordError",
 ]
 
 PathLike = Union[str, Path]
@@ -96,6 +103,10 @@ class Result:
     #: The IDs of every ``Submitted batch job <N>`` line a :func:`run` printed; empty with ``tty``.
     #: Any such line counts (also one ``cat`` printed); ``sbatch --parsable`` prints none.
     job_ids: list[str] = field(default_factory=list)
+    #: The job records :func:`run` stored on the cluster, one per submitted job.
+    records: list[JobRecord] = field(default_factory=list)
+    #: What went wrong around the command without failing it, e.g. a fact or record that could not be stored.
+    warnings: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -131,16 +142,37 @@ class ClusterJobs:
     jobs: list[Job] = field(default_factory=list)
     #: Slurm's ``ClusterName``, which jobs see as ``SLURM_CLUSTER_NAME``; ``None`` if unknown.
     slurm_cluster: Optional[str] = None
+    #: The job records of the listed jobs and of the window, by job ID; ``None`` when not read.
+    records: Optional[dict[str, JobRecord]] = None
+    #: Why the records could not be read; the jobs are listed all the same.
+    records_error: Optional[str] = None
 
     def as_dict(self) -> dict:
-        """The entry as ``ctun jobs --json`` prints it."""
-        return {
+        """The entry as ``ctun jobs --json`` prints it.
+
+        With records read, each job carries its ``record`` (or ``None``; an
+        array's tasks share the array's), and ``records_without_job`` lists the
+        records whose job is not listed.
+        """
+        entry = {
             "cluster": self.cluster,
             "slurm_cluster": self.slurm_cluster,
             "live": self.live,
             "error": self.error,
             "jobs": [job.as_dict() for job in self.jobs],
         }
+        if self.records is None and self.records_error is None:
+            return entry
+        found = self.records or {}
+        listed = set()
+        for job in entry["jobs"]:
+            # The tasks of an array share its record (see records.keys).
+            key = next((key for key in records_mod.keys(job["jobid"]) if key in found), None)
+            job["record"] = found[key].as_dict() if key else None
+            listed.add(key)
+        entry["records_without_job"] = [record.as_dict() for key, record in found.items() if key not in listed]
+        entry["records_error"] = self.records_error
+        return entry
 
 
 @dataclass
@@ -162,6 +194,17 @@ class LogoutResult:
 
     cluster: str
     was_live: bool
+
+
+@dataclass
+class RecordEdit:
+    """One job's record after :func:`edit_job`."""
+
+    job_id: str
+    #: The record as stored, keys this ctun doesn't know included; ``None`` for a
+    #: job without one that the edit left alone.
+    record: Optional[dict]
+    changed: bool  # false: the record had these values already, nothing was stored
 
 
 @dataclass
@@ -565,6 +608,8 @@ def run(
     tty: bool = False,
     timeout: Optional[float] = None,
     on_preflight: Optional[Callable[[Decision], None]] = None,
+    project: Optional[str] = None,
+    note: Optional[str] = None,
     config: Optional[Config] = None,
     config_path: Optional[PathLike] = None,
 ) -> Result:
@@ -581,6 +626,18 @@ def run(
     124; the remote command may keep running on the cluster. The IDs of the
     jobs the command submitted go into the :class:`Result` and the command log;
     with ``tty`` ctun doesn't see the output, so there are none.
+
+    For each submitted job, unless the cluster has ``job_records: false``, a
+    record is stored on the cluster: ``project``, ``note``, and the facts ctun
+    collects there itself (job name, working directory, the git state in it),
+    except for a job Slurm took before the command started: its ID was only
+    printed, e.g. by ``cat`` of a log. A fact or record that can't be had only
+    adds to ``Result.warnings``. The
+    ``job:<id>`` references in a ``note`` that will be stored are checked on
+    the cluster first: one it doesn't know raises :class:`NoteReferenceInvalid`,
+    and nothing runs. Its ``commit:<hash>`` references are checked once the jobs
+    are submitted, also in their own repos; one the cluster doesn't know is
+    stored all the same, with a warning.
     """
     if capture and tty:
         raise ValueError("a TTY needs streamed output; pass capture=False")
@@ -590,12 +647,18 @@ def run(
     config, path = _load(config, config_path)
     spec = _spec(config, cluster)
     decision = _preflight(config, path, cluster, spec, tokens)
+    if note and not tty and config.clusters[cluster].job_records:
+        # Commits only after the submission: the first job of a project brings its repo.
+        _check_note(spec, notes_mod.references(note, "job"))
     if on_preflight is not None:
         on_preflight(decision)
     # Log the command (not its output) so `status` can show activity.
     entry_id = cmdlog.record(cluster, tokens)
     if tty:
-        return Result(ssh.run(spec, tokens, tty=True))
+        result = Result(ssh.run(spec, tokens, tty=True))
+        if project or note:
+            result.warnings.append("no job record written (a TTY hides the output)")
+        return result
     job_ids: list[str] = []
 
     def submitted(output: str) -> None:
@@ -605,6 +668,7 @@ def run(
             job_ids.append(job_id)
             cmdlog.record_jobs(cluster, entry_id, [job_id])
 
+    started = time.monotonic()
     if capture:
         res = ssh.capture(spec, tokens, timeout=timeout)
         result = Result(res.returncode, res.stdout, res.stderr)
@@ -612,6 +676,12 @@ def run(
     else:
         result = Result(ssh.run(spec, tokens, on_line=submitted))
     result.job_ids = job_ids
+    if config.clusters[cluster].job_records:
+        _write_records(
+            spec, result, project=project, note=note, command=tokens, ran_for=time.monotonic() - started
+        )
+    elif project or note:
+        result.warnings.append("no job record written (job_records is off for this cluster)")
     return result
 
 
@@ -688,6 +758,7 @@ def jobs(
     cluster: Optional[str] = None,
     *,
     since_minutes: int = DEFAULT_SINCE_MINUTES,
+    with_records: bool = False,
     config: Optional[Config] = None,
     config_path: Optional[PathLike] = None,
 ) -> list[ClusterJobs]:
@@ -697,6 +768,10 @@ def jobs(
     running and pending jobs and those that finished within ``since_minutes``
     (``0``: active jobs only). A cluster whose tunnel is down is reported, never
     logged in to; a probe that fails is reported in ``error``.
+
+    ``with_records`` also reads the job records (one more call per cluster, on
+    clusters that keep them): those of the listed jobs and those written within
+    the window, in ``records``; a failure to read them goes in ``records_error``.
     """
     config, _ = _load(config, config_path)
     results: list[ClusterJobs] = []
@@ -711,8 +786,63 @@ def jobs(
                 item.jobs = overview.jobs
             except Exception as exc:  # noqa: BLE001 — surface, don't abort the sweep
                 item.error = str(exc)
+        if with_records and item.live and item.error is None and entry.job_records:
+            try:
+                keys = dict.fromkeys(key for job in item.jobs for key in records_mod.keys(job.jobid))
+                found = records_mod.list_recent(spec, since_minutes, list(keys))
+                item.records = {record.job_id: record for record in found}
+            except RuntimeError as exc:
+                item.records_error = str(exc)
         results.append(item)
     return results
+
+
+def edit_job(
+    cluster: str,
+    job_id: str,
+    *,
+    project: Optional[str] = None,
+    note: Optional[str] = None,
+    confirm_note: bool = False,
+    config: Optional[Config] = None,
+    config_path: Optional[PathLike] = None,
+) -> RecordEdit:
+    """Give job ``job_id``'s record a new ``project`` or ``note``, as ``ctun jobs edit``.
+
+    ``None`` keeps a value, ``""`` clears it. A new note is unconfirmed unless
+    ``confirm_note``, which a person's review sets; its references are checked
+    as in :func:`run` (:class:`NoteReferenceInvalid`). Each change is logged in
+    the record's ``changes``; the facts from submit time never change. A job
+    without a record (e.g. one submitted with plain ``sbatch``) gets one without
+    facts, if Slurm knows it. Raises :class:`LoginRequired` without a live
+    tunnel and :class:`RecordError` when ``job_id`` is no job ID or the job is
+    unknown, the cluster keeps no records, there is no note to confirm, or the
+    record can't be stored.
+    """
+    if not records_mod.is_job_id(job_id):
+        raise RecordError(f"'{job_id}' is not a Slurm job ID (like 51319, or 51319_4 for an array task).")
+    config, _ = _load(config, config_path)
+    spec = _spec(config, cluster)
+    if not ssh.is_live(spec):
+        raise LoginRequired(cluster)
+    if not config.clusters[cluster].job_records:
+        raise RecordError(f"job_records is off for '{cluster}'.")
+    try:
+        current = records_mod.read(spec, job_id)
+        if current is None and notes_mod.unknown_references(spec, [f"job:{job_id}"]):
+            raise RecordError(f"Job {job_id} is unknown on '{cluster}' (not in squeue or sacct).")
+        updated = records_mod.edited(current, job_id, project=project, note=note, confirm_note=confirm_note)
+        if updated is None:
+            return RecordEdit(job_id, current, changed=False)
+        if note:
+            workdir = (updated.get("code") or {}).get("workdir")
+            _check_note(
+                spec, notes_mod.references(note), project=updated.get("project"), repos=[workdir] if workdir else []
+            )
+        records_mod.update(spec, updated)
+    except (RuntimeError, ValueError) as exc:
+        raise RecordError(str(exc)) from exc
+    return RecordEdit(job_id, updated, changed=True)
 
 
 # --- helpers -----------------------------------------------------------------------
@@ -762,6 +892,77 @@ def _host_keys(cluster: str, action: str, call: Callable):
         return call()
     except RuntimeError as exc:
         raise HostKeyError(f"cannot {action} the host key of '{cluster}': {exc}") from exc
+
+
+def _check_note(
+    spec: ConnSpec, refs: list[str], *, project: Optional[str] = None, repos: Sequence[str] = ()
+) -> None:
+    """Raise :class:`NoteReferenceInvalid` if a note's ``refs`` name a commit or job the cluster doesn't know.
+
+    ``project`` and ``repos`` say where to look for commits, as in
+    :func:`notes.unknown_references`.
+    """
+    try:
+        unknown = notes_mod.unknown_references(spec, refs, project=project, repos=repos)
+    except RuntimeError as exc:
+        raise NoteReferenceInvalid(str(exc)) from exc
+    if unknown:
+        raise NoteReferenceInvalid(
+            "the note names references the cluster does not know: " + ", ".join(unknown), unknown
+        )
+
+
+#: Seconds a job may seem older than the command that submitted it: Slurm's
+#: clock and the login node's may differ a little.
+_SUBMIT_SLACK = 60
+
+
+def _write_records(
+    spec: ConnSpec,
+    result: Result,
+    *,
+    project: Optional[str],
+    note: Optional[str],
+    command: list[str],
+    ran_for: float,
+) -> None:
+    """Store a record for each job in ``result.job_ids``; a failure goes in ``result.warnings``, never raises.
+
+    A job Slurm took more than ``ran_for`` seconds ago (the command's run time)
+    is an old one the command only printed, and gets none.
+    """
+    for job_id in result.job_ids:
+        facts = facts_mod.collect(spec, job_id)
+        if facts.submitted_ago is not None and facts.submitted_ago > ran_for + _SUBMIT_SLACK:
+            if project or note:
+                result.warnings.append(f"no record for job {job_id}: it was submitted before this command")
+            continue
+        result.warnings.extend(facts.warnings)
+        record = records_mod.build(job_id, facts, project=project, note=note, command=command)
+        try:
+            records_mod.write(spec, record)
+        except RuntimeError as exc:
+            result.warnings.append(str(exc))
+            continue
+        result.records.append(record)
+    commits = notes_mod.references(note, "commit") if note else []
+    if commits and result.records:
+        _check_note_commits(spec, result, commits, project)
+
+
+def _check_note_commits(spec: ConnSpec, result: Result, commits: list[str], project: Optional[str]) -> None:
+    """Warn in ``result.warnings`` about the ``commits`` of a stored note that the cluster doesn't know."""
+    repos = [record.code["workdir"] for record in result.records if record.code.get("workdir")]
+    try:
+        unknown = notes_mod.unknown_references(spec, commits, project=project, repos=repos)
+    except RuntimeError as exc:
+        result.warnings.append(f"the note's commit references were not checked: {exc}")
+        return
+    if unknown:
+        result.warnings.append(
+            "the note is stored, but its commits are in neither the job's repo nor its project's: "
+            + ", ".join(unknown)
+        )
 
 
 def _preflight(config: Config, path: Path, name: str, spec: ConnSpec, tokens: list[str]) -> Decision:

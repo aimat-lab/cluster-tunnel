@@ -30,7 +30,7 @@ DEFAULT_CONTROL_PERSIST = "7d"
 DEFAULT_SERVER_ALIVE_INTERVAL = 60
 DEFAULT_SERVER_ALIVE_COUNT_MAX = 10
 
-#: Seconds a probe over the tunnel (budget usage, job list, remote user) may take;
+#: Seconds a probe over the tunnel (budget usage, job list, job records, remote user) may take;
 #: a probe that takes longer fails like any other (budget: per ``fail_mode``).
 PROBE_TIMEOUT = 120
 
@@ -51,6 +51,7 @@ class ExitCode(enum.IntEnum):
     LOGIN_REQUIRED = 10      #: No live tunnel — the caller must `login` again.
     BUDGET_EXHAUSTED = 11    #: Guarded command blocked: usage at/over the limit.
     BUDGET_GUARD_ERROR = 12  #: Guarded command blocked: budget couldn't be verified.
+    NOTE_REFERENCE_INVALID = 13  #: `--note` names a job (or commit, in an edit) the cluster doesn't know.
 
 
 #: Machine-readable markers printed to stderr (``ctun-error: <marker>``) alongside
@@ -60,4 +61,5 @@ ERROR_MARKERS = {
     ExitCode.LOGIN_REQUIRED: "login_required",
     ExitCode.BUDGET_EXHAUSTED: "budget_exhausted",
     ExitCode.BUDGET_GUARD_ERROR: "budget_guard_error",
+    ExitCode.NOTE_REFERENCE_INVALID: "note_reference_invalid",
 }

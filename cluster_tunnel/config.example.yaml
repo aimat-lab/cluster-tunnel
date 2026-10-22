@@ -46,6 +46,8 @@ clusters:
   #     guard_scope: every-command   # also inside `bash -c '...'`, after env/timeout/xargs;
   #                                  # default first-command: the first word only
   #     fail_mode: closed
+  #   job_records: true              # `run` stores a record per submitted job in
+  #                                  # ~/.ctun/jobs/ on the cluster (default true)
 
   # HAICORE @ KIT
   # ===============================

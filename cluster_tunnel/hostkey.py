@@ -219,8 +219,7 @@ def _checked(spec: ConnSpec, args: list[str]) -> str:
     """Run the helper with ``args`` where ssh runs; return its stdout or raise."""
     res = _run_helper(spec, args)
     if res.returncode != 0:
-        detail = (res.stderr or "").strip() or f"exit code {res.returncode}"
-        raise RuntimeError(detail)
+        raise RuntimeError(ssh.failure(res))
     return res.stdout
 
 

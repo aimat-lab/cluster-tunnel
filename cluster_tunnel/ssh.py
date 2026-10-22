@@ -261,8 +261,7 @@ def prepare_socket(spec: ConnSpec) -> None:
         except subprocess.TimeoutExpired:
             raise wsl.WslError("WSL did not respond while preparing the control socket.") from None
         if res.returncode != 0:
-            detail = res.stderr.strip() or f"exit code {res.returncode}"
-            raise wsl.WslError(f"cannot prepare the control socket {spec.socket} in WSL: {detail}")
+            raise wsl.WslError(f"cannot prepare the control socket {spec.socket} in WSL: {failure(res)}")
         return
     socket = Path(spec.socket)
     socket.parent.mkdir(parents=True, exist_ok=True)
@@ -316,6 +315,11 @@ def captured(
         return subprocess.CompletedProcess(full, 127, "", f"{full[0]}: {exc.strerror or exc}\n")
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(full, 124, "", f"{full[0]}: no answer after {timeout}s\n")
+
+
+def failure(res: subprocess.CompletedProcess) -> str:
+    """Why ``res`` failed: what it said on stderr, or its exit code when it said nothing."""
+    return (res.stderr or "").strip() or f"exit code {res.returncode}"
 
 
 def check(spec: ConnSpec) -> subprocess.CompletedProcess:

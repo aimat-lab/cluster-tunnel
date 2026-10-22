@@ -91,6 +91,14 @@ def test_run_passes_tty_to_ssh(tmp_path: Path, monkeypatch) -> None:
     assert calls["run"] == [(["htop"], True)]
 
 
+def test_run_leaves_options_after_the_command_to_the_command(tmp_path: Path, monkeypatch) -> None:
+    _config(tmp_path, monkeypatch)
+    calls = _stub_run(monkeypatch)
+    r = _invoke("-t", "localhost", "run", "--note", "x", "python", "train.py", "--project", "p", "--tty", "-n")
+    assert r.exit_code == 0, r.output
+    assert calls["run"] == [(["python", "train.py", "--project", "p", "--tty", "-n"], False)]
+
+
 def test_run_without_a_tunnel_names_both_logins(tmp_path: Path, monkeypatch) -> None:
     _config(tmp_path, monkeypatch)
     calls = _stub_run(monkeypatch, live=False)

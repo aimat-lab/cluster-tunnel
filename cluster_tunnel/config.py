@@ -92,6 +92,7 @@ class Cluster(BaseModel):
     description: Union[str, list[str]] = ""
     restrictions: dict[str, Any] = Field(default_factory=dict)
     budget: Optional[Budget] = None
+    job_records: bool = True  # `run` writes a record per submitted job on the cluster
 
     @field_validator("description", mode="before")
     @classmethod

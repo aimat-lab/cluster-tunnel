@@ -101,6 +101,26 @@ class LoginError(ClusterTunnelError):
         self.diagnostics = diagnostics
 
 
+class NoteReferenceInvalid(ClusterTunnelError):
+    """A job note names a ``job:<id>`` (or, in an edit, a ``commit:<hash>``) the cluster
+    doesn't know; nothing ran, or the edit was not saved.
+
+    ``unknown`` lists those references; it is empty when the check itself
+    could not run, which refuses the note all the same.
+    """
+
+    exit_code = ExitCode.NOTE_REFERENCE_INVALID
+
+    def __init__(self, message: str, unknown: Sequence[str] = ()):
+        super().__init__(message)
+        self.unknown = list(unknown)
+
+
+class RecordError(ClusterTunnelError):
+    """A job record could not be changed: the job is unknown, the cluster keeps no
+    records, there is no note to confirm, or the record could not be read or stored."""
+
+
 class TransportError(ClusterTunnelError):
     """The transport around ssh failed (on Windows: the WSL bridge)."""
 

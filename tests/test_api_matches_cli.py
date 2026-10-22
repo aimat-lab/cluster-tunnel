@@ -163,9 +163,10 @@ def test_jobs(monkeypatch, since: str, minutes: int, error: Optional[str]) -> No
         return Overview("haic", [Job("active", "7", "PENDING", "0:00", "2:00:00", "cpu", "1", "N/A", "j.sh")])
 
     monkeypatch.setattr("cluster_tunnel.jobs.query", fake_query)
+    monkeypatch.setattr("cluster_tunnel.records.list_recent", lambda spec, since, ids: [])
     r = _cli("jobs", "--since", since, "--json")
     assert r.exit_code == 0, r.output
-    entries = [entry.as_dict() for entry in api.jobs(since_minutes=minutes)]
+    entries = [entry.as_dict() for entry in api.jobs(since_minutes=minutes, with_records=True)]
     assert json.loads(r.output) == {"since_minutes": minutes, "clusters": entries}
     assert queries[: len(queries) // 2] == queries[len(queries) // 2:] == [("c", "u", minutes)]
 
