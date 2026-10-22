@@ -39,6 +39,7 @@ from cluster_tunnel import config as config_mod
 from cluster_tunnel import facts as facts_mod
 from cluster_tunnel import hostkey as hostkey_mod
 from cluster_tunnel import jobs as jobs_mod
+from cluster_tunnel import login_bridge
 from cluster_tunnel import notes as notes_mod
 from cluster_tunnel import popup, session, ssh, wsl
 from cluster_tunnel import records as records_mod
@@ -187,6 +188,8 @@ class LoginResult:
     via: Optional[str]  # Windows: the WSL distro carrying the tunnel
     session: dict
     session_kept: bool  # the running session, and its budget window, was kept
+    #: The front end behind ``CTUN_LOGIN_BRIDGE`` asked the human and opened the tunnel.
+    bridged: bool = False
 
 
 @dataclass
@@ -379,7 +382,10 @@ def login(
 
     Without ``interactive``, ssh asks for the password and OTP in this process's
     terminal; with it, a dialog lets a present person enter them, and they go
-    straight to ssh. ``credentials`` are a password and OTP the calling program
+    straight to ssh. If a front end started this process and serves a login
+    bridge (``CTUN_LOGIN_BRIDGE``, see :mod:`cluster_tunnel.login_bridge`), it
+    asks the person in place of the dialog and opens the tunnel itself, with this
+    config file; ``timeout`` bounds the wait, and ``bridged`` says so. ``credentials`` are a password and OTP the calling program
     asked for itself (a window's masked field, say): they go to ssh the same
     way, with no dialog and no terminal, and a cluster that requires a password
     refuses the login without one before ssh starts. A tunnel that is already
@@ -389,13 +395,14 @@ def login(
     unguarded. ``verbose`` (0-3) adds ssh's ``-v`` flags.
 
     Raises :class:`LoginError` when the tunnel can't be opened or the dialog is
-    cancelled or can't be shown; its ``diagnostics`` hold what ssh said about
+    cancelled or can't be shown, and when the bridge fails, is cancelled, gives
+    no answer in time, or says the tunnel is live when it isn't; its ``diagnostics`` hold what ssh said about
     why. Raises ``ValueError`` when given both ``credentials`` and
     ``interactive``.
     """
     if interactive and credentials is not None:
         raise ValueError("pass credentials or interactive, not both")
-    config, _ = _load(config, config_path)
+    config, path = _load(config, config_path)
     entry = _entry(config, cluster)
     spec = ssh.conn_spec(config, cluster)
 
@@ -414,8 +421,12 @@ def login(
 
     already_live = ssh.is_live(spec)
     chosen_limit = default_limit
+    bridged = False
     if already_live:
         pass
+    elif interactive and _bridge_logged_in(cluster, spec, default_limit, timeout, path):
+        # The front end's own `login --credentials-stdin` opened the tunnel and started the session.
+        bridged = True
     elif interactive or credentials is not None:
         if credentials is None:
             if not popup.gui_available():
@@ -465,14 +476,13 @@ def login(
     if chosen_limit is not None and chosen_limit < 0:
         chosen_limit = None
 
-    # A session begins on a fresh authentication; re-auth resets the window.
-    sess = None if not already_live else session.load(cluster)
+    # A session begins on a fresh authentication; re-auth resets the window. A
+    # bridged login started its own, unless the front end keeps another cache.
+    sess = session.load(cluster) if already_live or bridged else None
+    kept = already_live and sess is not None
     if sess is None:
         cmdlog.clear(cluster)  # fresh session: start the command log empty
         sess = session.start(cluster, limit=chosen_limit, unit=unit)
-        kept = False
-    else:
-        kept = True
 
     return LoginResult(
         cluster=cluster,
@@ -482,7 +492,30 @@ def login(
         via=via,
         session=sess,
         session_kept=kept,
+        bridged=bridged,
     )
+
+
+def _bridge_logged_in(cluster: str, spec: ConnSpec, default_limit: Optional[float], timeout: int, path: Path) -> bool:
+    """True once the front end behind the login bridge logged in to ``cluster``; False if none took the login."""
+    try:
+        outcome = login_bridge.log_in(cluster, default_limit, config=str(path), timeout=timeout)
+    except login_bridge.Unavailable:
+        return False
+    except login_bridge.NoAnswer:
+        raise LoginError(f"No answer through the login bridge within {timeout}s.", cluster) from None
+    if outcome.status == "cancelled":
+        raise LoginError("Login cancelled.", cluster)
+    if outcome.status == "failed":
+        detail = f": {outcome.message}" if outcome.message else "."
+        raise LoginError(f"Login to '{cluster}' through the login bridge failed{detail}", cluster)
+    if not ssh.is_live(spec):
+        raise LoginError(
+            f"The login bridge reported a live tunnel to '{cluster}', but there is none."
+            " Did the front end log in with the config file the request named?",
+            cluster,
+        )
+    return True
 
 
 def logout(

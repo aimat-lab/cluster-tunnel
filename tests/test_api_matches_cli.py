@@ -16,7 +16,7 @@ from typing import Callable, Optional
 import pytest
 from click.testing import CliRunner
 
-from cluster_tunnel import api, cmdlog, paths, popup, records, session, ssh
+from cluster_tunnel import api, cmdlog, login_bridge, paths, popup, records, session, ssh
 from cluster_tunnel.budget import Decision
 from cluster_tunnel.cli import cli
 from cluster_tunnel.jobs import Job, Overview
@@ -284,7 +284,30 @@ LOGIN_CASES = {
     "dialog login fails": (["-i"], {"interactive": True},
                            lambda mp: (_master(mp, before=False, after=False),
                                        _dialog(mp, popup.Credentials("pw", None, None), ok=False)), False),
+    "bridge": (["-i"], {"interactive": True},
+               lambda mp: (_master(mp, before=False, after=True), _bridge(mp, login_bridge.Outcome("live"))), False),
+    "bridge says live, but isn't": (["-i"], {"interactive": True},
+                                    lambda mp: (_master(mp, before=False, after=False),
+                                                _bridge(mp, login_bridge.Outcome("live"))), False),
+    "bridge cancelled": (["-i"], {"interactive": True},
+                         lambda mp: (_master(mp, before=False, after=True),
+                                     _bridge(mp, login_bridge.Outcome("cancelled"))), False),
+    "bridge declines": (["-i"], {"interactive": True},
+                        lambda mp: (_master(mp, before=False, after=True), _bridge(mp, login_bridge.Unavailable()),
+                                    _dialog(mp, popup.Credentials("pw", "1", 9.0))), False),
 }
+
+
+def _bridge(monkeypatch, outcome) -> None:
+    """A front end behind the login bridge that answers ``outcome`` (or raises it)."""
+
+    def log_in(name, limit, *, config, timeout):
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(login_bridge, "log_in", log_in)
+    monkeypatch.setattr(popup, "prompt_credentials", lambda *a: pytest.fail("the popup must stay shut"))
 
 
 def _state() -> tuple:

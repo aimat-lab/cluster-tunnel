@@ -37,6 +37,8 @@ Design rationale lives in `DESIGN.md`; `PLAN.md` is the historical build plan.
 - `wsl.py` — the Windows bridge (experimental): on Windows every `ssh`/`rsync`
   runs inside WSL 2 via `wsl.exe`; also the login preflight and local-path
   translation. A no-op elsewhere.
+- `login_bridge.py` — hands `login -i` to the front end that started the agent
+  (the VS Code extension), over the local pipe it names in `CTUN_LOGIN_BRIDGE`.
 - `popup.py` — interactive login: a self-contained tkinter dialog for the human
   to enter password/OTP + session limit, then hands the secrets to
   `pty_login`. The agent never sees the secrets.

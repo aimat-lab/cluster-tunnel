@@ -809,7 +809,8 @@ def test_projects_rename_sweep_notes_a_down_cluster_and_succeeds(tmp_path: Path,
     _two_clusters(tmp_path, monkeypatch, cluster, live={"a"})
     r = CliRunner().invoke(cli, ["projects", "rename", "htfm", "eval"])
     assert r.exit_code == 0, r.output
-    assert "tunnel down" in r.output and "job_records is off" in r.output and "1 jobs" in r.output
+    out = _norm(r)
+    assert "tunnel down" in out and "job_records is off" in out and "1 jobs" in out
 
 
 def test_projects_rename_fails_when_a_cluster_fails(tmp_path: Path, monkeypatch) -> None:

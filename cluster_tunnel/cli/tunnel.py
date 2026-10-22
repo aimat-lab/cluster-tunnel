@@ -5,6 +5,34 @@ from __future__ import annotations
 import rich_click as click
 
 
+def _stdin_credentials():
+    """Read ``{"password", "otp", "limit"}`` from stdin as login credentials.
+
+    The secrets come through a pipe, never argv or the environment, like the
+    login window's own hand-off. Read as UTF-8 whatever the platform's default
+    (cp1252 on Windows would garble a non-ASCII password).
+    """
+    import json
+    import math
+
+    from cluster_tunnel import api
+
+    try:
+        raw = json.loads(click.get_binary_stream("stdin").read().decode("utf-8"))
+    except UnicodeDecodeError:
+        raise click.ClickException("--credentials-stdin: stdin is not UTF-8.") from None
+    except ValueError as exc:
+        raise click.ClickException(f"--credentials-stdin: stdin is not JSON ({exc}).") from None
+    if not isinstance(raw, dict):
+        raise click.ClickException("--credentials-stdin: expected a JSON object.")
+    password, otp, limit = raw.get("password", ""), raw.get("otp"), raw.get("limit")
+    if not isinstance(password, str) or not (otp is None or isinstance(otp, str)):
+        raise click.ClickException("--credentials-stdin: password and otp must be strings.")
+    if limit is not None and (isinstance(limit, bool) or not isinstance(limit, (int, float)) or not math.isfinite(limit)):
+        raise click.ClickException("--credentials-stdin: limit must be a number (-1 for none) or null.")
+    return api.Credentials(password=password, otp=otp or None, limit=None if limit is None else float(limit))
+
+
 class TunnelCommandsMixin:
     """Mixin providing the tunnel lifecycle commands."""
 
@@ -12,12 +40,18 @@ class TunnelCommandsMixin:
     @click.pass_obj
     @click.option("-i", "--interactive", is_flag=True, help="Pop up a window for a present human to enter the password and OTP.")
     @click.option("-l", "--limit", type=float, default=None, help="Session compute budget (overrides config session_limit; -1 = infinite/unguarded).")
+    @click.option(
+        "--credentials-stdin", is_flag=True,
+        help='Read {"password", "otp", "limit"} as JSON on stdin instead of popping up a window (for front ends such as the VS Code extension).',
+    )
     @click.option("--timeout", type=int, default=120, help="Seconds to wait for an interactive login to complete.")
     @click.option(
         "-v", "--verbose", count=True,
         help="Show ssh's own connection diagnostics on errors (repeatable: -v, -vv, -vvv).",
     )
-    def login_command(self, interactive: bool, limit: float | None, timeout: int, verbose: int) -> None:
+    def login_command(
+        self, interactive: bool, limit: float | None, credentials_stdin: bool, timeout: int, verbose: int
+    ) -> None:
         """Authenticate once and open the persistent background tunnel.
 
         This is the only step that needs your password and one-time password
@@ -39,7 +73,10 @@ class TunnelCommandsMixin:
         its own (e.g. a coding agent): a small pop-up lets a present human type
         the service password and one-time passcode (OTP) in separate fields,
         which are fed to ssh at their respective prompts — the agent never sees
-        the secrets.
+        the secrets. A front end that asks the human itself passes them with
+        `--credentials-stdin` instead. An agent started by such a front end (the
+        ctun VS Code extension) finds it in `CTUN_LOGIN_BRIDGE`, and `-i` lets the
+        front end ask in its own input boxes instead of the pop-up.
 
         Pass `-v` (or `-vv`/`-vvv`) to surface ssh's own connection diagnostics
         when a login fails — useful for debugging host, auth, or network errors.
@@ -49,12 +86,16 @@ class TunnelCommandsMixin:
         """
         from cluster_tunnel import api
 
+        if interactive and credentials_stdin:
+            raise click.UsageError("Give -i/--interactive or --credentials-stdin, not both.")
+
         config = self.load_config()
         name, _ = self.resolve_cluster(config)
+        credentials = _stdin_credentials() if credentials_stdin else None
         try:
             result = api.login(
-                name, interactive=interactive, limit=limit, timeout=timeout, verbose=verbose,
-                config=config, config_path=self.config_path,
+                name, interactive=interactive, credentials=credentials, limit=limit, timeout=timeout,
+                verbose=verbose, config=config, config_path=self.config_path,
             )
         except api.LoginError as exc:
             if exc.diagnostics:
@@ -63,7 +104,9 @@ class TunnelCommandsMixin:
             raise click.ClickException(f"{exc}{hint}") from exc
 
         # The styled top line of the success panel.
-        if result.already_live:
+        if result.bridged:
+            headline = f"[green]✓[/green] Tunnel to [cyan]{name}[/cyan] [green]established[/green] [dim](through the login bridge)[/dim]."
+        elif result.already_live:
             headline = f"[yellow]●[/yellow] Tunnel to [cyan]{name}[/cyan] is [yellow]already live[/yellow]."
         elif result.interactive:
             headline = f"[green]✓[/green] Tunnel to [cyan]{name}[/cyan] [green]established[/green] [dim](interactive)[/dim]."

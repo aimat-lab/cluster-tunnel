@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from cluster_tunnel import wsl
+from cluster_tunnel import login_bridge, wsl
 
 
 @pytest.fixture(autouse=True)
@@ -22,6 +22,17 @@ def _native_transport(request, monkeypatch) -> None:
     if request.node.get_closest_marker("real_wsl") is None:
         monkeypatch.setattr(wsl, "enabled", lambda: False)
         monkeypatch.setattr(wsl, "_wsl_exe", lambda: "wsl.exe")
+
+
+@pytest.fixture(autouse=True)
+def _no_login_bridge(monkeypatch) -> None:
+    """Keep the login bridge of the terminal running the suite out of every test.
+
+    In a VS Code terminal with the ctun extension, ``CTUN_LOGIN_BRIDGE`` names
+    the real window: a ``login -i`` test would pop up its input boxes and wait.
+    Tests of the bridge set the variable themselves.
+    """
+    monkeypatch.delenv(login_bridge.BRIDGE_VARIABLE, raising=False)
 
 
 def _find_bash() -> str | None:

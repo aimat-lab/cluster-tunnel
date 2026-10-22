@@ -66,6 +66,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`records.sh update` takes several records). A record another machine edits
   meanwhile is renamed again from its new state, not overwritten; `jobs edit`
   does the same. If storing fails partway, `renamed` still lists what was stored.
+- **Credentials on stdin.** `ctun login --credentials-stdin` reads the password,
+  OTP and session limit as JSON on stdin and logs in with them, as
+  `api.login(credentials=...)` does: for front ends such as the VS Code extension,
+  whose own input boxes ask the human.
+- **`login -i` through a front end.** `ctun login -i` hands the login to the
+  front end that started it, such as a VS Code window with the ctun extension,
+  when that names its local pipe in `CTUN_LOGIN_BRIDGE`; so does
+  `api.login(interactive=True)`, whose `LoginResult.bridged` says so. The front
+  end asks for the secrets and logs in itself with
+  `ctun --config <config> login --credentials-stdin`, using the config file the
+  request names; only the outcome comes back, and ctun checks that the tunnel is
+  really up. `--timeout` bounds the wait. Without the variable, or if the front
+  end declines or is gone, the popup opens as before.
 
 ### Changed
 
