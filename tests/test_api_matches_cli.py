@@ -16,12 +16,13 @@ from typing import Callable, Optional
 import pytest
 from click.testing import CliRunner
 
-from cluster_tunnel import api, cmdlog, paths, popup, session, ssh
+from cluster_tunnel import api, cmdlog, paths, popup, records, session, ssh
 from cluster_tunnel.budget import Decision
 from cluster_tunnel.cli import cli
 from cluster_tunnel.jobs import Job, Overview
 
 from tests.test_cli import _norm
+from tests.test_records import FakeCluster
 
 CONFIG = (
     "clusters:\n"
@@ -169,6 +170,88 @@ def test_jobs(monkeypatch, since: str, minutes: int, error: Optional[str]) -> No
     entries = [entry.as_dict() for entry in api.jobs(since_minutes=minutes, with_records=True)]
     assert json.loads(r.output) == {"since_minutes": minutes, "clusters": entries}
     assert queries[: len(queries) // 2] == queries[len(queries) // 2:] == [("c", "u", minutes)]
+
+
+# --- job records and projects ------------------------------------------------------
+
+
+def _store(monkeypatch, fail: Optional[str] = None) -> FakeCluster:
+    """A fresh record store on the cluster; ``fail`` makes storing fail with that message."""
+    cluster = FakeCluster(known_refs=("job:9",))
+    cluster.written = {"7": {"job_id": "7", "project": "htfm"}, "8": {"job_id": "8", "project": "htfm/mh"}}
+    monkeypatch.setattr(ssh, "feed_script", cluster.feed_script)
+    if fail:
+
+        def failing(spec, pairs):
+            raise records.UpdateError(fail, [])
+
+        monkeypatch.setattr(records, "update_many", failing)
+    return cluster
+
+
+def _projects(cluster: FakeCluster) -> dict:
+    return {job_id: record.get("project") for job_id, record in cluster.written.items()}
+
+
+@pytest.mark.parametrize("targeted", [False, True])
+def test_projects(monkeypatch, targeted: bool) -> None:
+    monkeypatch.setattr(ssh, "is_live", lambda spec: spec.name == "c")
+    _store(monkeypatch)
+    r = _cli(*(["-t", "c"] if targeted else []), "projects", "list", "--json")
+    assert r.exit_code == 0, r.output
+    entries = [entry.as_dict() for entry in api.projects("c" if targeted else None)]
+    assert json.loads(r.output) == {"clusters": entries}
+
+
+RENAME_CASES = {
+    # live, storing fails with, exit code with a target, without one
+    "renamed": (True, None, 0, 0),
+    "tunnel down": (False, None, 10, 0),
+    "storing fails": (True, "could not store the records of jobs 7, 8: boom", 1, 1),
+}
+
+
+@pytest.mark.parametrize("case", RENAME_CASES)
+@pytest.mark.parametrize("targeted", [False, True])
+def test_projects_rename(monkeypatch, case: str, targeted: bool) -> None:
+    live, fail, targeted_code, sweep_code = RENAME_CASES[case]
+    monkeypatch.setattr(ssh, "is_live", lambda spec: live and spec.name == "c")
+    via_cli = _store(monkeypatch, fail)
+    r = _cli(*(["-t", "c"] if targeted else []), "projects", "rename", "htfm", "eval", "--json")
+    via_api = _store(monkeypatch, fail)
+    entries = [entry.as_dict() for entry in api.rename_project("htfm", "eval", "c" if targeted else None)]
+    assert r.exit_code == (targeted_code if targeted else sweep_code), r.output
+    if r.exit_code != 10:
+        assert json.loads(r.stdout) == {"clusters": entries}
+    assert _projects(via_cli) == _projects(via_api)
+
+
+EDIT_CASES = {
+    "edited": (True, ["7", "8", "9"]),
+    "unknown job": (True, ["7", "999"]),
+    "no job id": (True, ["7", "../x"]),
+    "tunnel down": (False, ["7"]),
+}
+
+
+@pytest.mark.parametrize("case", EDIT_CASES)
+def test_jobs_edit(monkeypatch, case: str) -> None:
+    live, job_ids = EDIT_CASES[case]
+    monkeypatch.setattr(ssh, "is_live", lambda spec: live)
+    via_cli = _store(monkeypatch)
+    r = _cli("-t", "c", "jobs", "edit", *job_ids, "--project", "eval")
+    via_api = _store(monkeypatch)
+    code, marker, value = _outcome(lambda: api.edit_jobs("c", job_ids, project="eval"))
+    assert r.exit_code == code, r.output
+    if marker:
+        assert f"ctun-error: {marker}" in _norm(r)
+    if code == 0:  # the same records, but for when each edit was made
+
+        def undated(record: dict) -> dict:
+            return {**record, "changes": [{**change, "at": None} for change in record["changes"]]}
+
+        assert [undated(record) for record in json.loads(r.stdout)] == [undated(edit.record) for edit in value]
+    assert _projects(via_cli) == _projects(via_api)
 
 
 # --- login and logout --------------------------------------------------------------

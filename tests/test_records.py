@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -25,6 +26,11 @@ FACTS_OUTPUT = (
 )
 
 
+def _version(record: dict) -> str:
+    """The version records.sh gives a record that FakeCluster lists as json.dumps(record)."""
+    return hashlib.sha256(json.dumps(record).encode("utf-8")).hexdigest()
+
+
 class FakeCluster:
     """Answers `feed_script` for records.sh like a cluster would."""
 
@@ -34,6 +40,9 @@ class FakeCluster:
         self.known_refs = known_refs
         self.written: dict[str, dict] = {}
         self.note_checks: list[list] = []
+        self.update_calls = 0
+        #: Called before each update call, to change records "on another machine".
+        self.meanwhile = lambda: None
 
     def feed_script(self, spec, script_path: Path, args: list, timeout=None) -> subprocess.CompletedProcess:
         assert script_path == records.SCRIPT_PATH
@@ -46,10 +55,22 @@ class FakeCluster:
             if self.facts_rc:
                 return subprocess.CompletedProcess([], self.facts_rc, "", "squeue: not found")
             return subprocess.CompletedProcess([], 0, f"{FACTS_OUTPUT}submitted_ago={self.submitted_ago}\n", "")
-        if command in ("write", "update"):
+        if command == "write":
             job_id, payload = rest
             self.written[job_id] = json.loads(base64.b64decode(payload))
             return subprocess.CompletedProcess([], 0, "", "")
+        if command == "update":
+            self.update_calls += 1
+            self.meanwhile()
+            said = []
+            for job_id, version, payload in zip(rest[0::3], rest[1::3], rest[2::3]):
+                current = self.written.get(job_id)
+                if version != ("absent" if current is None else _version(current)):
+                    said.append(f"changed {job_id}")
+                    continue
+                self.written[job_id] = json.loads(base64.b64decode(payload))
+                said.append(f"stored {job_id}")
+            return subprocess.CompletedProcess([], 0, "".join(f"{line}\n" for line in said), "")
         lines = "\n".join(json.dumps(record) for record in self.written.values())
         return subprocess.CompletedProcess([], 0, lines, "")
 
@@ -407,6 +428,19 @@ def test_job_edit_refuses_what_is_no_job_id(tmp_path: Path, monkeypatch) -> None
     assert cluster.written == {} and cluster.note_checks == []
 
 
+def test_a_tasks_first_record_starts_from_its_arrays(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    array = {"job_id": "5131", "project": "htfm", "note": "sweep", "code": {"commit": "abc"}, "changes": [{"at": 1}]}
+    cluster.written["5131"] = array
+    _patch_job(monkeypatch, cluster)
+    assert api.edit_job("localhost", "5131_4", note="the diverging one").changed
+    task = cluster.written["5131_4"]
+    assert task["project"] == "htfm" and task["code"] == {"commit": "abc"} and task["note"] == "the diverging one"
+    assert [change["note"] for change in task["changes"]] == [["sweep", "the diverging one"]]
+    assert cluster.written["5131"] == array and cluster.note_checks == []  # no need to ask Slurm
+
+
 def test_job_edit_takes_an_array_task(tmp_path: Path, monkeypatch) -> None:
     _cfg(tmp_path, monkeypatch)
     cluster = FakeCluster(known_refs=("job:5131_4",))
@@ -487,11 +521,314 @@ def test_jobs_edit_gives_several_jobs_the_same_change(tmp_path: Path, monkeypatc
     assert "updated job 7" in r.stderr and "job 8 already has these values" in r.stderr
 
 
-def test_jobs_edit_stops_at_the_first_failing_job(tmp_path: Path, monkeypatch) -> None:
+def test_jobs_edit_changes_no_job_when_one_is_unknown(tmp_path: Path, monkeypatch) -> None:
     _cfg(tmp_path, monkeypatch)
     cluster = FakeCluster()
     cluster.written["7"] = {"job_id": "7"}
     _patch_job(monkeypatch, cluster)
-    r = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "edit", "7", "999", "--project", "new"])
-    assert r.exit_code != 0 and "999 is unknown" in r.output
-    assert cluster.written["7"]["project"] == "new" and "999" not in cluster.written
+    r = CliRunner().invoke(cli, ["-t", "localhost", "jobs", "edit", "7", "999", "998", "--project", "new"])
+    assert r.exit_code != 0 and "Jobs 999, 998 are unknown" in _norm(r)
+    assert cluster.written == {"7": {"job_id": "7"}} and cluster.update_calls == 0
+
+
+def test_jobs_edit_reads_and_stores_many_jobs_in_one_call_each(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    cluster.written = {str(job_id): {"job_id": str(job_id)} for job_id in range(100, 140)}
+    _patch_job(monkeypatch, cluster)
+    calls = []
+    feed = cluster.feed_script
+    monkeypatch.setattr(
+        "cluster_tunnel.ssh.feed_script", lambda spec, path, args, timeout=None: calls.append(args[0]) or feed(
+            spec, path, args, timeout
+        )
+    )
+    edits = api.edit_jobs("localhost", [str(job_id) for job_id in range(100, 140)], project="htfm")
+    assert all(edit.changed for edit in edits) and calls == ["list", "update"]
+    assert {record["project"] for record in cluster.written.values()} == {"htfm"}
+
+
+def test_update_many_splits_the_records_into_batches_that_fit_a_command_line(monkeypatch) -> None:
+    cluster = FakeCluster()
+    monkeypatch.setattr("cluster_tunnel.ssh.feed_script", cluster.feed_script)
+    many = [({"job_id": str(job_id), "note": "x" * 1000}, "absent") for job_id in range(100)]
+    done = records.update_many(object(), many)
+    assert len(cluster.written) == 100 and cluster.update_calls > 1
+    assert done.stored == [str(job_id) for job_id in range(100)] and done.changed == []
+
+
+def test_update_many_names_what_it_stored_before_a_failure(monkeypatch) -> None:
+    calls = []
+
+    def flaky(spec, script_path, args, timeout=None):
+        job_ids = args[1::3]
+        calls.append(job_ids)
+        if len(calls) == 1:
+            return subprocess.CompletedProcess([], 0, "".join(f"stored {i}\n" for i in job_ids), "")
+        # The second call stores its first record, then fails.
+        return subprocess.CompletedProcess([], 5, f"stored {job_ids[0]}\n", "the record is not valid base64")
+
+    monkeypatch.setattr("cluster_tunnel.ssh.feed_script", flaky)
+    many = [({"job_id": str(job_id), "note": "x" * 7000}, "absent") for job_id in range(4)]
+    try:
+        records.update_many(object(), many)
+    except records.UpdateError as exc:
+        assert calls == [["0", "1"], ["2", "3"]] and exc.stored == ["0", "1", "2"]
+        assert "could not store the records of jobs 3: the record is not valid base64" in str(exc)
+    else:
+        raise AssertionError("a failed call must raise")
+
+
+# --- listing projects (ctun projects list) ---------------------------------------
+
+
+def test_projects_list_counts_the_jobs_of_every_record(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    cluster.written = {
+        "7": {"job_id": "7", "project": "htfm/mh"},
+        "8": {"job_id": "8", "project": "htfm/mh"},
+        "9": {"job_id": "9", "project": "eval"},
+        "10": {"job_id": "10", "project": None},
+    }
+    _patch_job(monkeypatch, cluster)
+    r = CliRunner().invoke(cli, ["-t", "localhost", "projects", "list", "--json"])
+    assert r.exit_code == 0, r.output
+    (entry,) = json.loads(r.stdout)["clusters"]
+    assert entry == {
+        "cluster": "localhost",
+        "live": True,
+        "job_records": True,
+        "error": None,
+        "projects": [{"project": "eval", "jobs": 1}, {"project": "htfm/mh", "jobs": 2}],
+    }
+    assert [item.as_dict() for item in api.projects("localhost")] == [entry]
+
+
+def test_projects_list_counts_an_array_once(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    cluster.written = {
+        "123": {"job_id": "123", "project": "htfm"},
+        "123_1": {"job_id": "123_1", "project": "htfm"},
+        "123_2": {"job_id": "123_2", "project": "htfm/fix"},
+        "../x": {"job_id": "../x", "project": "htfm"},
+    }
+    _patch_job(monkeypatch, cluster)
+    [entry] = api.projects("localhost")
+    assert entry.projects == [{"project": "htfm", "jobs": 1}, {"project": "htfm/fix", "jobs": 1}]
+
+
+def test_projects_list_skips_a_down_tunnel(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    _patch_job(monkeypatch, FakeCluster())
+    monkeypatch.setattr("cluster_tunnel.ssh.is_live", lambda spec: False)
+    r = CliRunner().invoke(cli, ["-t", "localhost", "projects", "list"])
+    assert r.exit_code == 0 and "tunnel down" in r.output
+
+
+def test_projects_list_marks_a_cluster_without_records(tmp_path: Path, monkeypatch) -> None:
+    config = _cfg(tmp_path, monkeypatch)
+    config.write_text("clusters:\n  localhost:\n    host: localhost\n    job_records: false\n", encoding="utf-8")
+    _patch_job(monkeypatch, FakeCluster())
+    monkeypatch.setattr("cluster_tunnel.ssh.is_live", lambda spec: (_ for _ in ()).throw(AssertionError))
+    r = CliRunner().invoke(cli, ["-t", "localhost", "projects", "list", "--json"])
+    (entry,) = json.loads(r.stdout)["clusters"]
+    assert entry["job_records"] is False and entry["error"] is None and entry["projects"] == []
+    assert entry["live"] is None  # not checked: the cluster is skipped anyway
+
+
+# --- renaming a project (ctun projects rename) ------------------------------------
+
+
+def test_projects_rename_renames_the_nested_projects_too(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    cluster.written = {
+        "7": {"job_id": "7", "project": "htfm"},
+        "8": {"job_id": "8", "project": "htfm/mh"},
+        "9": {"job_id": "9", "project": "htfmx"},
+        "10": {"job_id": "10", "project": None},
+    }
+    _patch_job(monkeypatch, cluster)
+    r = CliRunner().invoke(cli, ["-t", "localhost", "projects", "rename", "htfm", "archive/htfm", "--json"])
+    assert r.exit_code == 0, r.output
+    (entry,) = json.loads(r.stdout)["clusters"]
+    assert entry == {"cluster": "localhost", "live": True, "job_records": True, "error": None, "renamed": ["7", "8"]}
+    assert cluster.update_calls == 1
+    projects = {job_id: record["project"] for job_id, record in cluster.written.items()}
+    assert projects == {"7": "archive/htfm", "8": "archive/htfm/mh", "9": "htfmx", "10": None}
+    assert cluster.written["8"]["changes"][-1]["project"] == ["htfm/mh", "archive/htfm/mh"]
+
+
+def test_projects_rename_refuses_an_empty_name(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    _patch_job(monkeypatch, FakeCluster())
+    r = CliRunner().invoke(cli, ["-t", "localhost", "projects", "rename", "htfm", "/"])
+    assert r.exit_code == 2 and "the new project name is empty" in _norm(r)
+    r = CliRunner().invoke(cli, ["-t", "localhost", "projects", "rename", "", "x"])
+    assert r.exit_code == 2 and "the project to rename is empty" in _norm(r)
+
+
+def test_a_rename_into_a_project_inside_old_is_safe_to_run_again(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    cluster.written = {
+        "7": {"job_id": "7", "project": "htfm"},
+        "8": {"job_id": "8", "project": "htfm/mh"},
+        "9": {"job_id": "9", "project": "htfm/oldish"},
+    }
+    _patch_job(monkeypatch, cluster)
+    renamed = {"7": "htfm/old", "8": "htfm/old/mh", "9": "htfm/old/oldish"}
+    assert api.rename_project("htfm", "htfm/old", "localhost")[0].renamed == ["7", "8", "9"]
+    assert {job_id: record["project"] for job_id, record in cluster.written.items()} == renamed
+    assert api.rename_project("htfm", "htfm/old", "localhost")[0].renamed == []
+    assert {job_id: record["project"] for job_id, record in cluster.written.items()} == renamed
+
+
+def test_damaged_records_neither_stop_nor_break_a_rename(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    cluster.written = {
+        "a": {"project": "htfm"},
+        "b": {"job_id": "../x", "project": "htfm"},
+        "c": {"job_id": True, "project": "htfm"},
+        "d": {"job_id": "8", "project": 5},
+        "7": {"job_id": 7, "project": "htfm"},
+    }
+    _patch_job(monkeypatch, cluster)
+    assert api.projects("localhost")[0].error is None  # project 5 is not counted, and nothing breaks
+    [entry] = api.rename_project("htfm", "eval", "localhost")
+    assert entry.error is None and entry.renamed == ["7"]
+    assert cluster.written["7"]["project"] == "eval" and cluster.written["a"] == {"project": "htfm"}
+
+
+def test_a_rename_keeps_an_edit_made_meanwhile_on_another_machine(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    cluster.written = {"7": {"job_id": "7", "project": "htfm", "note": "x"}, "8": {"job_id": "8", "project": "htfm"}}
+    _patch_job(monkeypatch, cluster)
+
+    def confirm_once():
+        cluster.meanwhile = lambda: None
+        cluster.written["7"] = {**cluster.written["7"], "note_confirmed": True}
+
+    cluster.meanwhile = confirm_once
+    [entry] = api.rename_project("htfm", "eval", "localhost")
+    assert entry.error is None and sorted(entry.renamed) == ["7", "8"] and cluster.update_calls == 2
+    assert cluster.written["7"]["project"] == "eval" and cluster.written["7"]["note_confirmed"] is True
+
+
+def test_a_rename_gives_up_on_a_record_that_keeps_changing(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    cluster.written = {"7": {"job_id": "7", "project": "htfm"}, "8": {"job_id": "8", "project": "htfm"}}
+    _patch_job(monkeypatch, cluster)
+    edits = iter(range(100))
+    cluster.meanwhile = lambda: cluster.written["7"].update(note=f"edit {next(edits)}")
+    [entry] = api.rename_project("htfm", "eval", "localhost")
+    assert entry.renamed == ["8"] and "kept changing while they were renamed: 7" in entry.error
+
+
+def test_a_failed_rename_names_what_it_stored(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    cluster.written = {"7": {"job_id": "7", "project": "htfm"}}
+    _patch_job(monkeypatch, cluster)
+
+    def fail(spec, pairs):
+        raise records.UpdateError("could not store the records of jobs 8: timed out", ["7"])
+
+    monkeypatch.setattr("cluster_tunnel.records.update_many", fail)
+    [entry] = api.rename_project("htfm", "eval", "localhost")
+    assert entry.renamed == ["7"] and entry.error.endswith("timed out")
+
+
+def test_jobs_edit_keeps_an_edit_made_meanwhile_on_another_machine(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    cluster.written = {"7": {"job_id": "7", "note": "x"}}
+    _patch_job(monkeypatch, cluster)
+
+    def confirm_once():
+        cluster.meanwhile = lambda: None
+        cluster.written["7"] = {**cluster.written["7"], "note_confirmed": True}
+
+    cluster.meanwhile = confirm_once
+    edit = api.edit_job("localhost", "7", project="htfm")
+    assert edit.changed and cluster.update_calls == 2
+    assert cluster.written["7"]["project"] == "htfm" and cluster.written["7"]["note_confirmed"] is True
+
+
+def test_project_names_lose_stray_slashes_and_blanks() -> None:
+    assert records.project_name(" archive//htfm/ ") == "archive/htfm"
+    assert records.project_name("a / b") == "a/b"
+    assert records.project_name("/") == ""
+
+
+def test_projects_rename_takes_the_names_as_stored(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    cluster.written = {"7": {"job_id": "7", "project": "htfm"}, "8": {"job_id": "8", "project": "htfm/mh"}}
+    _patch_job(monkeypatch, cluster)
+    [entry] = api.rename_project("htfm/", "archive/", "localhost")
+    assert entry.renamed == ["7", "8"]
+    assert [record["project"] for record in cluster.written.values()] == ["archive", "archive/mh"]
+
+
+def test_run_and_edit_store_the_project_name_as_stored(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    cluster = FakeCluster()
+    _patch_run(monkeypatch, cluster, "Submitted batch job 7\n")
+    assert api.run("localhost", ["sbatch", "x"], project="htfm//mh/").records[0].project == "htfm/mh"
+    assert api.edit_job("localhost", "7", project=" eval/ ").record["project"] == "eval"
+
+
+def test_projects_rename_on_a_down_target_needs_a_login(tmp_path: Path, monkeypatch) -> None:
+    _cfg(tmp_path, monkeypatch)
+    _patch_job(monkeypatch, FakeCluster())
+    monkeypatch.setattr("cluster_tunnel.ssh.is_live", lambda spec: False)
+    r = CliRunner().invoke(cli, ["-t", "localhost", "projects", "rename", "htfm", "eval", "--json"])
+    assert r.exit_code == ExitCode.LOGIN_REQUIRED and "login_required" in r.output
+
+
+def _two_clusters(tmp_path: Path, monkeypatch, cluster: FakeCluster, live: set[str]) -> None:
+    config = _cfg(tmp_path, monkeypatch)
+    config.write_text(
+        "clusters:\n  a:\n    host: a\n  b:\n    host: b\n  c:\n    host: c\n    job_records: false\n",
+        encoding="utf-8",
+    )
+    _patch_job(monkeypatch, cluster)
+    monkeypatch.setattr("cluster_tunnel.ssh.conn_spec", lambda config, name: name)
+    monkeypatch.setattr("cluster_tunnel.ssh.is_live", lambda spec: spec in live)
+
+
+def test_projects_rename_sweep_notes_a_down_cluster_and_succeeds(tmp_path: Path, monkeypatch) -> None:
+    cluster = FakeCluster()
+    cluster.written = {"7": {"job_id": "7", "project": "htfm"}}
+    _two_clusters(tmp_path, monkeypatch, cluster, live={"a"})
+    r = CliRunner().invoke(cli, ["projects", "rename", "htfm", "eval"])
+    assert r.exit_code == 0, r.output
+    assert "tunnel down" in r.output and "job_records is off" in r.output and "1 jobs" in r.output
+
+
+def test_projects_rename_fails_when_a_cluster_fails(tmp_path: Path, monkeypatch) -> None:
+    cluster = FakeCluster()
+    cluster.written = {"7": {"job_id": "7", "project": "htfm"}}
+    _two_clusters(tmp_path, monkeypatch, cluster, live={"a", "b"})
+
+    def fail(spec, pairs):
+        raise records.UpdateError("could not store the records of jobs 7: timed out", [])
+
+    monkeypatch.setattr("cluster_tunnel.records.update_many", fail)
+    r = CliRunner().invoke(cli, ["projects", "rename", "htfm", "eval", "--json"])
+    assert r.exit_code == 1
+    assert [entry["error"] for entry in json.loads(r.stdout)["clusters"]][:2] == [
+        "could not store the records of jobs 7: timed out"
+    ] * 2
+
+
+def test_projects_rename_on_a_target_without_records_fails(tmp_path: Path, monkeypatch) -> None:
+    _two_clusters(tmp_path, monkeypatch, FakeCluster(), live={"a", "b", "c"})
+    r = CliRunner().invoke(cli, ["-t", "c", "projects", "rename", "htfm", "eval"])
+    assert r.exit_code == 1 and "job_records is off" in r.output

@@ -524,6 +524,61 @@ def test_jobs_with_no_clusters(tmp_path: Path, monkeypatch) -> None:
     assert "No clusters configured. Run `ctun config --init`." in _norm(r)
 
 
+# --- projects ----------------------------------------------------------------
+
+
+def _records(monkeypatch):
+    from tests.test_records import FakeCluster
+
+    cluster = FakeCluster()
+    cluster.written = {
+        "7": {"job_id": "7", "project": "htfm"},
+        "8": {"job_id": "8", "project": "htfm/mh"},
+        "9": {"job_id": "9", "project": "htfm/mh"},
+    }
+    monkeypatch.setattr(ssh, "feed_script", cluster.feed_script)
+    return cluster
+
+
+def test_projects_list_prints_each_project_with_its_jobs(tmp_path: Path, monkeypatch) -> None:
+    _config(tmp_path, monkeypatch)
+    _tunnel(monkeypatch, True)
+    _records(monkeypatch)
+    r = _invoke("projects", "list")
+    assert r.exit_code == 0, r.output
+    assert "localhost htfm 1 jobs htfm/mh 2 jobs" in _norm(r)
+
+
+def test_projects_rename_prints_what_it_renamed(tmp_path: Path, monkeypatch) -> None:
+    _config(tmp_path, monkeypatch)
+    _tunnel(monkeypatch, True)
+    cluster = _records(monkeypatch)
+    r = _invoke("projects", "rename", "htfm", "archive/htfm")
+    assert r.exit_code == 0, r.output
+    assert "localhost htfm → archive/htfm 3 jobs" in _norm(r)
+    assert {record["project"] for record in cluster.written.values()} == {"archive/htfm", "archive/htfm/mh"}
+
+
+def test_projects_rename_on_a_down_target_names_the_login(tmp_path: Path, monkeypatch) -> None:
+    _config(tmp_path, monkeypatch)
+    _tunnel(monkeypatch, False)
+    cluster = _records(monkeypatch)
+    r = _invoke("-t", "localhost", "projects", "rename", "htfm", "eval")
+    assert r.exit_code == ExitCode.LOGIN_REQUIRED
+    out = _norm(r)
+    assert "No live tunnel for 'localhost'" in out and "ctun-error: login_required" in out
+    assert cluster.update_calls == 0
+
+
+def test_projects_rename_refuses_an_empty_name_as_a_usage_error(tmp_path: Path, monkeypatch) -> None:
+    _config(tmp_path, monkeypatch)
+    _tunnel(monkeypatch, True)
+    _records(monkeypatch)
+    r = _invoke("projects", "rename", "htfm", " / ")
+    assert r.exit_code == 2
+    assert 'the new project name is empty; to clear a project, use `jobs edit --project ""`' in _norm(r)
+
+
 # --- guard_scope through the CLI (added with the opt-in scope) -------------------
 
 

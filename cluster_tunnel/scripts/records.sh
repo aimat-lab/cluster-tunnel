@@ -7,8 +7,11 @@
 # Commands (invoked by ctun as `bash -s -- <command> <args...>`):
 #
 #   write <job_id> <base64 JSON>   store a new record; refuses to overwrite (exit 4)
-#   update <job_id> <base64 JSON>  store a record in place of the job's current one,
-#                                  or as its first
+#   update (<job_id> <version> <base64 JSON>)...
+#                                  store each record in place of the job's current
+#                                  one, or as its first, if that is still at
+#                                  <version> (see version_of); prints `stored <id>`
+#                                  or, for a record changed meanwhile, `changed <id>`
 #   list <since_minutes> [job_id...]
 #                                  print the records written in the last
 #                                  <since_minutes> minutes (0 = none) and those of
@@ -43,6 +46,19 @@ need_job_id() {
         echo "not a job ID: $1" >&2
         exit 2
     fi
+}
+
+# The version of record file $1: the SHA-256 of its line as `list` and `all` print
+# it, without the newline, or `absent` without a file. ctun hashes the line it read
+# the same way, so an update can tell whether the record changed since.
+version_of() {
+    local content
+    if [ ! -e "$1" ]; then
+        echo absent
+        return 0
+    fi
+    content="$(cat "$1")"
+    printf '%s' "$content" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -d ' ' -f 1
 }
 
 print_record() {
@@ -183,11 +199,25 @@ case "$command" in
         ;;
     update)
         need_store
-        job_id="${1:?job id required}"
-        payload="${2:?record required}"
-        need_job_id "$job_id"
-        tmp="$(decode_to_temp "$job_id" "$payload")" || exit 5
-        mv -f "$tmp" "$dir/$job_id.json"
+        if [ "$#" -eq 0 ] || [ $(( $# % 3 )) -ne 0 ]; then
+            echo "update takes <job_id> <version> <base64 JSON> triples" >&2
+            exit 2
+        fi
+        for (( i = 1; i <= $#; i += 3 )); do
+            need_job_id "${!i}"  # all of them before storing any
+        done
+        while [ "$#" -ge 3 ]; do
+            # Not atomic: another update can still slip in between the check and
+            # the `mv`, but only within these few milliseconds, not since the read.
+            if [ "$(version_of "$dir/$1.json")" != "$2" ]; then
+                echo "changed $1"
+            else
+                tmp="$(decode_to_temp "$1" "$3")" || exit 5
+                mv -f "$tmp" "$dir/$1.json"
+                echo "stored $1"
+            fi
+            shift 3
+        done
         ;;
     list)
         need_store
@@ -221,7 +251,8 @@ case "$command" in
         refs "$@"
         ;;
     *)
-        echo "usage: records.sh write|update <job_id> <base64> | list <since_minutes> [job_id...] | all" \
+        echo "usage: records.sh write <job_id> <base64> | update (<job_id> <version> <base64>)..." \
+             "| list <since_minutes> [job_id...] | all" \
              "| facts <job_id> | refs <repo>... -- <reference>..." >&2
         exit 2
         ;;

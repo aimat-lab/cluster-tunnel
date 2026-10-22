@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import subprocess
@@ -76,22 +77,58 @@ def test_list_without_records_is_empty(tmp_path: Path, bash: str) -> None:
     assert result.returncode == 0 and result.stdout == ""
 
 
+def _version(line: str) -> str:
+    """A record's version as ctun computes it from the line it read."""
+    return hashlib.sha256(line.encode("utf-8")).hexdigest()
+
+
 def test_update_overwrites_a_record_and_creates_a_missing_one(tmp_path: Path, bash: str) -> None:
     assert _run(bash, tmp_path, "records.sh", "write", "101", _b64({"job_id": "101"})).returncode == 0
-    assert _run(bash, tmp_path, "records.sh", "update", "101", _b64({"job_id": "101", "note": "x"})).returncode == 0
-    assert _run(bash, tmp_path, "records.sh", "update", "102", _b64({"job_id": "102"})).returncode == 0
+    [line] = _run(bash, tmp_path, "records.sh", "list", "0", "101").stdout.splitlines()
+    result = _run(
+        bash, tmp_path, "records.sh", "update",
+        "101", _version(line), _b64({"job_id": "101", "note": "x"}),
+        "102", "absent", _b64({"job_id": "102"}),
+    )
+    assert result.returncode == 0 and result.stdout.splitlines() == ["stored 101", "stored 102"]
     listed = _run(bash, tmp_path, "records.sh", "list", "0", "101", "102").stdout.splitlines()
     assert [json.loads(line) for line in listed] == [{"job_id": "101", "note": "x"}, {"job_id": "102"}]
     folder = tmp_path / "home" / ".ctun" / "jobs" / "haic"
     assert sorted(path.name for path in folder.iterdir()) == ["101.json", "102.json"]  # no temp files left
 
 
+def test_update_leaves_a_record_that_changed_since_it_was_read(tmp_path: Path, bash: str) -> None:
+    _run(bash, tmp_path, "records.sh", "write", "101", _b64({"job_id": "101", "note": "read"}))
+    [line] = _run(bash, tmp_path, "records.sh", "list", "0", "101").stdout.splitlines()
+    newer = {"job_id": "101", "note": "edited elsewhere"}
+    _run(bash, tmp_path, "records.sh", "update", "101", _version(line), _b64(newer))
+    result = _run(
+        bash, tmp_path, "records.sh", "update",
+        "101", _version(line), _b64({"job_id": "101", "note": "stale"}),
+        "102", _version(line), _b64({"job_id": "102"}),  # expects a record 102 does not have
+    )
+    assert result.returncode == 0 and result.stdout.splitlines() == ["changed 101", "changed 102"]
+    listed = _run(bash, tmp_path, "records.sh", "list", "0", "101", "102").stdout.splitlines()
+    assert [json.loads(line) for line in listed] == [newer]
+
+
+def test_update_refuses_incomplete_triples(tmp_path: Path, bash: str) -> None:
+    result = _run(bash, tmp_path, "records.sh", "update", "101", "absent", _b64({"job_id": "101"}), "102")
+    assert result.returncode == 2 and "triples" in result.stderr
+    assert _run(bash, tmp_path, "records.sh", "all").stdout == ""  # nothing stored
+
+
 def test_a_record_is_stored_only_under_a_job_id(tmp_path: Path, bash: str) -> None:
-    for command in ("write", "update"):
-        result = _run(bash, tmp_path, "records.sh", command, "../../x", _b64({"job_id": "x"}))
-        assert result.returncode == 2 and "not a job ID" in result.stderr
+    result = _run(bash, tmp_path, "records.sh", "write", "../../x", _b64({"job_id": "x"}))
+    assert result.returncode == 2 and "not a job ID" in result.stderr
+    result = _run(
+        bash, tmp_path, "records.sh", "update",
+        "101", "absent", _b64({"job_id": "101"}), "../../x", "absent", _b64({"job_id": "x"}),
+    )
+    assert result.returncode == 2 and "not a job ID" in result.stderr
     assert not (tmp_path / "home" / ".ctun" / "x.json").exists()
-    assert _run(bash, tmp_path, "records.sh", "update", "101_4", _b64({"job_id": "101_4"})).returncode == 0
+    assert _run(bash, tmp_path, "records.sh", "all").stdout == ""  # not even 101: all IDs come first
+    assert _run(bash, tmp_path, "records.sh", "update", "101_4", "absent", _b64({"job_id": "101_4"})).returncode == 0
     listed = _run(bash, tmp_path, "records.sh", "list", "0", "../101_4", "101_4").stdout.splitlines()
     assert [json.loads(line)["job_id"] for line in listed] == ["101_4"]
 

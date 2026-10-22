@@ -10,6 +10,8 @@ workflow and golden rules, see [SKILL.md](SKILL.md).
 - `status` — tunnel + session state
 - `jobs` — Slurm job overview
 - `jobs edit` — change jobs' project or note
+- `projects list` — every project in the job records
+- `projects rename` — rename a project in every job record
 - `info` — cluster briefing
 - `note` — record a fact about a cluster (after the user approves)
 - `login` — authenticate and open the tunnel
@@ -101,8 +103,9 @@ ctun -t <cluster> jobs edit <id> --confirm-note                 # the human conf
 
 Changes each job's [record](#job-records) on the cluster, so every machine and
 front end sees the change, and prints the resulting records as a JSON list. With
-several jobs it stops at the first that fails; the jobs before it keep their
-change, and running the fixed command again leaves them as they are. To read
+several jobs, all of them are checked first: an unknown job or reference changes
+none of them. They are read and stored a few dozen per SSH call; running the
+command again leaves the jobs that already have the change as they are. To read
 records without changing them, use `jobs --json`; widen `--since` for older
 jobs. A `/` in a project nests it. A new note is unconfirmed until
 `--confirm-note`, and its references are checked as in `run`, commits in the
@@ -110,9 +113,57 @@ job's own repo too; an unknown one refuses the edit (exit code 13).
 Each edit appends `{at, from, <field>: [old, new]}` to the record's `changes`;
 the facts from submit time are never changed. A job that has no record yet
 (e.g. one submitted with plain `sbatch`) gets one without facts; ctun refuses a
-job that Slurm doesn't know.
+job that Slurm doesn't know. A task of an array (`jobs edit 123_4`) gets a copy
+of the array's record to change, so it keeps the array's project and facts.
 
 **Only change a job after the user's explicit yes** to the exact command.
+
+## `projects list` — every project in the job records
+
+```
+ctun projects list                    # all clusters with a live tunnel
+ctun -t <cluster> projects list -j    # one cluster, machine-readable JSON
+```
+
+A project exists only through the jobs whose [record](#job-records) names it, so
+this reads every record on the cluster, however old, and counts the jobs per
+project. Use it to reuse an existing project name instead of inventing a new
+one. Jobs without a project are not counted. Read-only; down tunnels are
+reported, never logged in to.
+
+`--json` prints `{"clusters": [{cluster, live, job_records, error, projects}]}`,
+where `projects` is `[{project, jobs}]` sorted by name. `job_records` is false
+for a cluster configured without records, which is skipped (its `live` is
+`null`: not checked). `error` is set when
+the records could not be read.
+
+## `projects rename` — rename a project in every job record
+
+```
+ctun projects rename htfm archive/htfm             # every cluster with a live tunnel
+ctun -t <cluster> projects rename htfm eval -j     # one cluster, JSON
+```
+
+Gives every job of project OLD the project NEW, and the projects nested in OLD
+along with it: `htfm/mh` becomes `archive/htfm/mh`. If NEW already exists, the
+jobs join it. Both names lose a `/` or blanks at either end (`archive/` is
+`archive`), as every project name does when it is stored. Each change is logged in the record's `changes`, as with
+`jobs edit`. A down cluster keeps OLD; log in and run the command again, which
+is safe to repeat, also when NEW lies inside OLD (`htfm` to `htfm/old`): the
+projects already in NEW stay where they are.
+
+`--json` prints `{"clusters": [{cluster, live, job_records, error, renamed}]}`,
+where `renamed` lists the job IDs whose record changed, also when `error` says
+the rename stopped partway; `job_records` and `error` are as in
+`projects list`. A record edited on another machine meanwhile keeps that edit:
+ctun reads it again and renames it from there.
+
+It exits 1 when the rename failed on any cluster. With `-t <cluster>`, a down
+tunnel exits 10 (`ctun-error: login_required`), and a cluster that keeps no
+records exits 1. Without a target, down clusters are only noted. The records go back to the cluster a few
+dozen per SSH call.
+
+**Only rename a project after the user's explicit yes** to the exact command.
 
 ## `info` — cluster briefing
 

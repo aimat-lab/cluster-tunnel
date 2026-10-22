@@ -142,6 +142,8 @@ ctun -t haicore run -- sacct -j 12345    # inspect a finished/running job
 ctun -t haicore run -n -- sbatch big.sh  # -n/--dry-run: show the budget decision, don't submit
 ctun -t haicore run --project htfm --note "why this run" -- sbatch train.sh  # job record for the human
 ctun -t haicore jobs edit 12345 --project htfm/mh  # change it, ONLY after the user approved it
+ctun projects list                       # the projects already in use, to reuse their names
+ctun projects rename htfm archive/htfm   # rename one everywhere, ONLY after the user approved it
 ctun -t haicore upload ./data $WORK/data # copy local -> cluster (rsync, no re-auth)
 ctun -t haicore download out/run.log .   # copy cluster -> local
 ctun -t haicore logs                     # commands sent to this cluster this session

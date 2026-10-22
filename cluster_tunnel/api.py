@@ -69,11 +69,12 @@ from cluster_tunnel.ssh import ConnSpec
 __all__ = [
     # operations
     "load_config", "clusters", "connection", "is_live", "status", "login", "logout",
-    "preflight", "budget", "run", "feed_script", "upload", "download", "jobs", "edit_job",
-    "host_key", "pin_host_key",
+    "preflight", "budget", "run", "feed_script", "upload", "download", "jobs",
+    "edit_job", "edit_jobs", "projects", "rename_project", "host_key", "pin_host_key",
     # results and inputs
     "Credentials", "Result", "ClusterStatus", "ClusterJobs", "LoginResult", "LogoutResult", "HostKeyStatus",
-    "RecordEdit", "Decision", "Job", "JobRecord", "HostKey", "ConnSpec", "Config", "Cluster",
+    "ClusterProjects", "ProjectRename", "RecordEdit",
+    "Decision", "Job", "JobRecord", "HostKey", "ConnSpec", "Config", "Cluster",
     # errors
     "ClusterTunnelError", "ConfigError", "UnknownClusterError", "LoginRequired",
     "LoginError", "BudgetBlocked", "BudgetExhausted", "BudgetGuardError", "TransportError",
@@ -194,6 +195,38 @@ class LogoutResult:
 
     cluster: str
     was_live: bool
+
+
+@dataclass
+class ClusterProjects:
+    """One cluster's projects, as ``ctun projects list`` reports them."""
+
+    cluster: str
+    live: Optional[bool]  # None: not checked, as the cluster keeps no records
+    job_records: bool  # false: the cluster keeps no records, so it was skipped
+    error: Optional[str] = None
+    #: ``{"project", "jobs"}`` per project, by name; jobs without a project are not counted.
+    projects: list[dict] = field(default_factory=list)
+
+    def as_dict(self) -> dict:
+        """The entry as ``ctun projects list --json`` prints it."""
+        return asdict(self)
+
+
+@dataclass
+class ProjectRename:
+    """What :func:`rename_project` changed on one cluster."""
+
+    cluster: str
+    live: Optional[bool]  # None: not checked, as the cluster keeps no records
+    job_records: bool  # false: the cluster keeps no records, so it was skipped
+    error: Optional[str] = None
+    #: The IDs of the jobs whose record was renamed, also those stored before an ``error``.
+    renamed: list[str] = field(default_factory=list)
+
+    def as_dict(self) -> dict:
+        """The entry as ``ctun projects rename --json`` prints it."""
+        return asdict(self)
 
 
 @dataclass
@@ -641,6 +674,8 @@ def run(
     """
     if capture and tty:
         raise ValueError("a TTY needs streamed output; pass capture=False")
+    if project:
+        project = records_mod.project_name(project) or None
     if timeout is not None and not capture:
         raise ValueError("a timeout needs captured output; pass capture=True")
     tokens = _tokens(command)
@@ -814,38 +849,212 @@ def edit_job(
     as in :func:`run` (:class:`NoteReferenceInvalid`). Each change is logged in
     the record's ``changes``; the facts from submit time never change. A job
     without a record (e.g. one submitted with plain ``sbatch``) gets one without
-    facts, if Slurm knows it. Raises :class:`LoginRequired` without a live
-    tunnel and :class:`RecordError` when ``job_id`` is no job ID or the job is
-    unknown, the cluster keeps no records, there is no note to confirm, or the
-    record can't be stored.
+    facts, if Slurm knows it; a task of an array without one gets a copy of the
+    array's record (see :func:`records.keys`). A record another machine changes
+    meanwhile gets the edit on top of that change. Raises :class:`LoginRequired`
+    without a live tunnel and :class:`RecordError` when ``job_id`` is no job ID
+    or the job is unknown, the cluster keeps no records, there is no note to
+    confirm, or the record can't be stored.
     """
-    if not records_mod.is_job_id(job_id):
-        raise RecordError(f"'{job_id}' is not a Slurm job ID (like 51319, or 51319_4 for an array task).")
+    [edit] = edit_jobs(
+        cluster, [job_id], project=project, note=note, confirm_note=confirm_note,
+        config=config, config_path=config_path,
+    )
+    return edit
+
+
+def edit_jobs(
+    cluster: str,
+    job_ids: Sequence[str],
+    *,
+    project: Optional[str] = None,
+    note: Optional[str] = None,
+    confirm_note: bool = False,
+    config: Optional[Config] = None,
+    config_path: Optional[PathLike] = None,
+) -> list[RecordEdit]:
+    """Give every job in ``job_ids`` the same edit, as :func:`edit_job` does for one.
+
+    One :class:`RecordEdit` per job, in order. Every job is checked before any
+    record is stored, so an ID that is no job ID, an unknown job, a job without
+    a note to confirm or a reference the cluster doesn't know changes none of
+    them. The records are read and stored a few dozen per SSH call. If storing
+    fails partway, the :class:`RecordError` names the jobs already stored.
+    """
+    job_ids = list(dict.fromkeys(job_ids))
+    for job_id in job_ids:
+        if not records_mod.is_job_id(job_id):
+            raise RecordError(f"'{job_id}' is not a Slurm job ID (like 51319, or 51319_4 for an array task).")
+    if project is not None:
+        project = records_mod.project_name(project)
     config, _ = _load(config, config_path)
     spec = _spec(config, cluster)
     if not ssh.is_live(spec):
         raise LoginRequired(cluster)
     if not config.clusters[cluster].job_records:
         raise RecordError(f"job_records is off for '{cluster}'.")
+    edits: dict[str, RecordEdit] = {}
+    pending = job_ids
     try:
-        current = records_mod.read(spec, job_id)
-        if current is None and notes_mod.unknown_references(spec, [f"job:{job_id}"]):
-            raise RecordError(f"Job {job_id} is unknown on '{cluster}' (not in squeue or sacct).")
-        updated = records_mod.edited(current, job_id, project=project, note=note, confirm_note=confirm_note)
-        if updated is None:
-            return RecordEdit(job_id, current, changed=False)
-        if note:
-            workdir = (updated.get("code") or {}).get("workdir")
-            _check_note(
-                spec, notes_mod.references(note), project=updated.get("project"), repos=[workdir] if workdir else []
-            )
-        records_mod.update(spec, updated)
+        for _ in range(_EDIT_ATTEMPTS):
+            arrays = [records_mod.keys(job_id)[-1] for job_id in pending]
+            found = {
+                records_mod.job_id_of(item.record): item
+                for item in records_mod.read_many(spec, list(dict.fromkeys(pending + arrays)))
+            }
+            for job_id, array in zip(pending, arrays):
+                if job_id not in found and array in found:
+                    # A task's first record of its own starts as its array's, facts and all.
+                    record = {**found[array].record, "job_id": job_id, "changes": []}
+                    found[job_id] = records_mod.Stored(record, records_mod.ABSENT)
+            missing = [job_id for job_id in pending if job_id not in found]
+            unknown = notes_mod.unknown_references(spec, [f"job:{job_id}" for job_id in missing])
+            if unknown:
+                ids = ", ".join(ref[len("job:"):] for ref in unknown)
+                which = f"Jobs {ids} are" if len(unknown) > 1 else f"Job {ids} is"
+                raise RecordError(f"{which} unknown on '{cluster}' (not in squeue or sacct).")
+            changed: list[tuple[dict, str]] = []
+            for job_id in pending:
+                current = found.get(job_id, records_mod.Stored({}, records_mod.ABSENT))
+                updated = records_mod.edited(
+                    current.record, job_id, project=project, note=note, confirm_note=confirm_note
+                )
+                if updated is None:
+                    edits[job_id] = RecordEdit(job_id, current.record or None, changed=False)
+                else:
+                    changed.append((updated, current.version))
+            if note and changed:
+                workdirs = ((record.get("code") or {}).get("workdir") for record, _ in changed)
+                _check_note(spec, notes_mod.references(note), project=project, repos=[w for w in workdirs if w])
+            done = records_mod.update_many(spec, changed)
+            for record, _ in changed:
+                if record["job_id"] in done.stored:
+                    edits[record["job_id"]] = RecordEdit(record["job_id"], record, changed=True)
+            if not done.changed:
+                return [edits[job_id] for job_id in job_ids]
+            # Changed on another machine since they were read: apply the edit to that.
+            pending = done.changed
+    except records_mod.UpdateError as exc:
+        stored = [job_id for job_id in job_ids if job_id in exc.stored or job_id in edits and edits[job_id].changed]
+        raise RecordError(f"{exc} (already stored: {', '.join(stored) or 'none'})") from exc
     except (RuntimeError, ValueError) as exc:
         raise RecordError(str(exc)) from exc
-    return RecordEdit(job_id, updated, changed=True)
+    raise RecordError(
+        f"The records of jobs {', '.join(pending)} kept changing while they were edited; run the command again."
+    )
+
+
+# --- projects ----------------------------------------------------------------------
+
+
+def projects(
+    cluster: Optional[str] = None,
+    *,
+    config: Optional[Config] = None,
+    config_path: Optional[PathLike] = None,
+) -> list[ClusterProjects]:
+    """Every project in the job records of ``cluster``, or of every configured cluster, as ``ctun projects list``.
+
+    A project exists only through the jobs whose record names it, so this
+    reads every record, however old, and counts the jobs per project. A
+    cluster whose tunnel is down is reported, never logged in to; one that
+    keeps no records is skipped; a failure to read the records goes in ``error``.
+    """
+    config, _ = _load(config, config_path)
+    results: list[ClusterProjects] = []
+    for spec, item in _record_clusters(config, cluster, ClusterProjects):
+        if spec is not None:
+            try:
+                item.projects = records_mod.projects(records_mod.list_all(spec))
+            except RuntimeError as exc:
+                item.error = str(exc)
+        results.append(item)
+    return results
+
+
+def rename_project(
+    old: str,
+    new: str,
+    cluster: Optional[str] = None,
+    *,
+    config: Optional[Config] = None,
+    config_path: Optional[PathLike] = None,
+) -> list[ProjectRename]:
+    """Rename project ``old`` to ``new`` in every job record, as ``ctun projects rename``.
+
+    The projects nested in ``old`` move along: renaming ``htfm`` to
+    ``archive/htfm`` makes ``htfm/mh`` ``archive/htfm/mh``. If ``new`` exists
+    already, the jobs join it. Each change is logged in the record like
+    :func:`edit_job`, and the records go back to the cluster a few dozen per
+    SSH call. Works on ``cluster``, or on every configured cluster with a live
+    tunnel; a down cluster keeps ``old``, so call it again once it is logged in,
+    which is safe. Both names are taken as :func:`records.project_name` stores
+    them; ``ValueError`` if either is empty then. A damaged record (no job ID,
+    a project that is no string) is left as it is. A record another machine
+    changes meanwhile is read and renamed again, never overwritten with what was
+    read before. If storing fails, ``renamed`` still lists what was stored.
+    """
+    old, new = records_mod.project_name(old), records_mod.project_name(new)
+    if not old:
+        raise ValueError("the project to rename is empty")
+    if not new:
+        raise ValueError('the new project name is empty; to clear a project, use `jobs edit --project ""`')
+    config, _ = _load(config, config_path)
+    results: list[ProjectRename] = []
+    for spec, item in _record_clusters(config, cluster, ProjectRename):
+        if spec is not None:
+            try:
+                found = records_mod.list_all_stored(spec)
+                for _ in range(_EDIT_ATTEMPTS):
+                    done = records_mod.update_many(spec, _renamed(found, old, new))
+                    item.renamed += done.stored
+                    if not done.changed:
+                        break
+                    # Edited on another machine since they were read: rename what is there now.
+                    found = records_mod.read_many(spec, done.changed)
+                else:
+                    item.error = (
+                        "these records kept changing while they were renamed: "
+                        + ", ".join(done.changed) + "; run the command again"
+                    )
+            except records_mod.UpdateError as exc:
+                item.renamed += exc.stored
+                item.error = str(exc)
+            except RuntimeError as exc:
+                item.error = str(exc)
+        results.append(item)
+    return results
 
 
 # --- helpers -----------------------------------------------------------------------
+
+
+#: How often an edit is applied again to a record another machine changed meanwhile.
+_EDIT_ATTEMPTS = 3
+
+
+def _renamed(found: list[records_mod.Stored], old: str, new: str) -> list[tuple[dict, str]]:
+    """``(record, version)`` for each record in ``found`` that renaming ``old`` to ``new`` changes."""
+    changed = []
+    for current in found:
+        job_id = records_mod.job_id_of(current.record)
+        project = records_mod.renamed_project(current.record.get("project"), old, new)
+        if job_id is None or project is None:
+            continue  # a damaged record must not stop the others
+        updated = records_mod.edited(current.record, job_id, project=project, note=None, confirm_note=False)
+        if updated is not None:
+            changed.append((updated, current.version))
+    return changed
+
+
+def _record_clusters(config: Config, cluster: Optional[str], result_type: type):
+    """``(spec, result)`` per cluster asked for; ``spec`` is ``None`` unless the cluster is live and keeps records."""
+    for name in _names(config, cluster):
+        spec = ssh.conn_spec(config, name)
+        keeps_records = config.clusters[name].job_records
+        # A cluster without records is skipped, so its tunnel needn't be checked.
+        item = result_type(name, ssh.is_live(spec) if keeps_records else None, keeps_records)
+        yield (spec if item.live else None), item
 
 
 def _path_arg(config_path: Optional[PathLike]) -> Optional[str]:

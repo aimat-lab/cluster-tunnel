@@ -118,8 +118,8 @@ class JobsCommandsMixin:
         """Give one or more jobs the same project or note.
 
         Each change is stored in the job's record on the cluster, so every
-        machine sees it. Prints the resulting records as JSON. Stops at the first
-        job that fails; running the command again is safe.
+        machine sees it. Prints the resulting records as JSON. All jobs are
+        checked first: an unknown job or reference changes none of them.
 
         Example: ctun -t haicore jobs edit 51319 51322 --project htfm/mh
         """
@@ -132,25 +132,23 @@ class JobsCommandsMixin:
 
         config = self.load_config()
         name, _ = self.resolve_cluster(config)
-        results = []
-        for job_id in job_ids:
-            try:
-                edit = api.edit_job(
-                    name, job_id, project=project, note=note, confirm_note=confirm_note,
-                    config=config, config_path=self.config_path,
-                )
-            except api.LoginRequired as exc:
-                fail(str(exc), exc.exit_code)
-            except api.NoteReferenceInvalid as exc:
-                fail(f"Not saved: {exc}.", exc.exit_code)
-            except api.RecordError as exc:
-                raise click.ClickException(str(exc)) from exc
+        try:
+            edits = api.edit_jobs(
+                name, job_ids, project=project, note=note, confirm_note=confirm_note,
+                config=config, config_path=self.config_path,
+            )
+        except api.LoginRequired as exc:
+            fail(str(exc), exc.exit_code)
+        except api.NoteReferenceInvalid as exc:
+            fail(f"Not saved: {exc}.", exc.exit_code)
+        except api.RecordError as exc:
+            raise click.ClickException(str(exc)) from exc
+        for edit in edits:
             if edit.changed:
-                click.secho(f"ctun: updated job {job_id}", fg="bright_black", err=True)
+                click.secho(f"ctun: updated job {edit.job_id}", fg="bright_black", err=True)
             else:
-                click.secho(f"ctun: job {job_id} already has these values", fg="bright_black", err=True)
-            results.append(edit.record)
-        click.echo(json.dumps(results, indent=2, ensure_ascii=False))
+                click.secho(f"ctun: job {edit.job_id} already has these values", fg="bright_black", err=True)
+        click.echo(json.dumps([edit.record for edit in edits], indent=2, ensure_ascii=False))
 
     def _list_jobs(self, since: str, as_json: bool) -> None:
         from cluster_tunnel import api

@@ -45,16 +45,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `commit:<hash>` references are checked once the jobs are submitted, in their
   own repos and those of the project's earlier records; an unknown one only warns.
 - **Editing a job's project and note.** `ctun -t <cluster> jobs edit <id>...`
-  with `--project`, `--note` or `--confirm-note` (`api.edit_job()`) gives one or
-  more jobs' records the same change on the cluster, so every machine and agent
-  sees it, and prints the resulting records as a JSON list. An empty value clears
-  it (Unassigned, no note). A changed note is unconfirmed until `--confirm-note`.
-  Each edit is logged in the record's `changes` as old and new value; the facts
-  from submit time are never changed. For a job that has no record (e.g. one
-  submitted with plain `sbatch`), `jobs edit` creates one without facts, so older
-  jobs can join projects too. Records gain `note_confirmed` and `changes`.
-  `ctun jobs list` names the overview next to `jobs edit`; plain `ctun jobs` works
-  as before.
+  with `--project`, `--note` or `--confirm-note` (`api.edit_job()`, and
+  `api.edit_jobs()` for several) gives one or more jobs' records the same change
+  on the cluster, so every machine and agent sees it, and prints the resulting
+  records as a JSON list. An empty value clears it (Unassigned, no note). A
+  changed note is unconfirmed until `--confirm-note`. Each edit is logged in the
+  record's `changes` as old and new value; the facts from submit time are never
+  changed. For a job that has no record (e.g. one submitted with plain
+  `sbatch`), `jobs edit` creates one without facts, so older jobs can join
+  projects too. Records gain `note_confirmed` and `changes`. `ctun jobs list`
+  names the overview next to `jobs edit`; plain `ctun jobs` works as before.
+- **Projects of all time.** `ctun projects list` (`api.projects()`) lists every
+  project in the job records of each live cluster, however old, with its number
+  of jobs; `--json` for front ends such as the VS Code extension's Projects view.
+  A cluster configured without records is marked `"job_records": false`.
+- **Renaming a project.** `ctun projects rename OLD NEW` (`api.rename_project()`)
+  renames a project in every job record of each live cluster, with the projects
+  nested in it (`htfm/mh` → `archive/htfm/mh`). Each change is logged in the
+  record like `jobs edit`, and the records go back a few dozen per SSH call
+  (`records.sh update` takes several records). A record another machine edits
+  meanwhile is renamed again from its new state, not overwritten; `jobs edit`
+  does the same. If storing fails partway, `renamed` still lists what was stored.
 
 ### Changed
 

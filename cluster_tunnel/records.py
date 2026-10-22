@@ -15,11 +15,12 @@ facts (:mod:`cluster_tunnel.facts`) and checks a note's references
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 import socket
 import subprocess
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -34,6 +35,10 @@ SCRIPT_PATH = Path(__file__).parent / "scripts" / "records.sh"
 
 SCHEMA_VERSION = 1
 
+#: Characters of records per ``update`` call: its SSH command line must stay under
+#: Windows' 32767-character limit for wsl.exe, and Linux's 128 KiB per argument on the cluster.
+_UPDATE_BATCH_CHARS = 24_000
+
 #: A job's ID as records are keyed: ``51319``, or ``51319_4`` for one task of an array.
 _JOB_ID = re.compile(r"\d+(?:_\d+)?")
 
@@ -41,6 +46,14 @@ _JOB_ID = re.compile(r"\d+(?:_\d+)?")
 def is_job_id(text: str) -> bool:
     """True if ``text`` is a Slurm job ID a record can be stored under."""
     return _JOB_ID.fullmatch(text) is not None
+
+
+def job_id_of(raw: dict[str, Any]) -> Optional[str]:
+    """The job ID a raw record names, or ``None`` when it names none a record could be stored under."""
+    job_id = raw.get("job_id")
+    if isinstance(job_id, (str, int)) and not isinstance(job_id, bool) and is_job_id(str(job_id)):
+        return str(job_id)
+    return None
 
 
 def keys(job_id: str) -> list[str]:
@@ -101,6 +114,43 @@ class JobRecord:
         values["changes"] = values["changes"] or []
         values["job_id"] = str(raw["job_id"])
         return cls(**values)
+
+
+def projects(records: list[JobRecord]) -> list[dict[str, Any]]:
+    """Each project the ``records`` name, by name, with its number of jobs; records without one are left out.
+
+    An array counts once, also when some of its tasks have records of their own.
+    """
+    jobs: dict[str, set[str]] = {}
+    for record in records:
+        found = keys(record.job_id)
+        if found and record.project and isinstance(record.project, str):
+            jobs.setdefault(record.project, set()).add(found[-1])
+    return [{"project": project, "jobs": len(jobs[project])} for project in sorted(jobs)]
+
+
+def project_name(name: str) -> str:
+    """``name`` as a project is stored: ``/`` nests, so no ``/`` or blanks at either end
+    of a level, and no empty level (`` archive//htfm/ `` is ``archive/htfm``)."""
+    return "/".join(level.strip() for level in name.split("/") if level.strip())
+
+
+def renamed_project(project: Optional[str], old: str, new: str) -> Optional[str]:
+    """``project`` once ``old`` is renamed to ``new``, with the projects nested in ``old``; ``None`` if it is neither.
+
+    When ``new`` lies inside ``old`` (``htfm`` to ``htfm/old``), ``new`` and the
+    projects in it are left alone: an earlier run renamed them already, and the
+    rename must be safe to run again.
+    """
+    if not isinstance(project, str):
+        return None
+    if new.startswith(f"{old}/") and (project == new or project.startswith(f"{new}/")):
+        return None
+    if project == old:
+        return new
+    if project and project.startswith(f"{old}/"):
+        return new + project[len(old):]
+    return None
 
 
 def build(
@@ -193,19 +243,97 @@ def write(spec: ConnSpec, record: JobRecord) -> None:
         raise RuntimeError(f"could not write the record of job {record.job_id}: {ssh.failure(res)}")
 
 
-def update(spec: ConnSpec, record: dict[str, Any]) -> None:
-    """Store the raw ``record`` on the cluster in place of the job's current one, or as its first."""
-    document = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
-    payload = base64.b64encode(document.encode("utf-8")).decode("ascii")
-    res = call(spec, ["update", record["job_id"], payload])
-    if res.returncode != 0:
-        raise RuntimeError(f"could not store the record of job {record['job_id']}: {ssh.failure(res)}")
+#: The version of a job that has no record yet; see :class:`Stored`.
+ABSENT = "absent"
 
 
-def read(spec: ConnSpec, job_id: str) -> Optional[dict[str, Any]]:
-    """The raw record of ``job_id`` as stored, or ``None`` if the job has none."""
-    found = [raw for raw in _read_raw(spec, ["list", 0, job_id]) if str(raw.get("job_id")) == job_id]
-    return found[0] if found else None
+@dataclass
+class Stored:
+    """A raw record as read from the cluster, keys this ctun doesn't know included,
+    with its ``version``: an update made from it is refused if the record has
+    changed since (another machine edited it meanwhile)."""
+
+    record: dict[str, Any]
+    version: str
+
+
+@dataclass
+class Updated:
+    """What :func:`update_many` did, by job ID."""
+
+    stored: list[str] = field(default_factory=list)
+    #: Changed on the cluster since they were read, so not stored: read them again.
+    changed: list[str] = field(default_factory=list)
+
+
+class UpdateError(RuntimeError):
+    """Storing records failed; ``stored`` names those stored before it did."""
+
+    def __init__(self, message: str, stored: list[str]):
+        super().__init__(message)
+        self.stored = stored
+
+
+def update(spec: ConnSpec, record: dict[str, Any], version: str) -> bool:
+    """Store the raw ``record`` in place of the job's current one, or as its first.
+
+    ``version`` is that of the record it was made from (:attr:`Stored.version`,
+    or :data:`ABSENT` for the job's first). Returns ``False`` without storing
+    when the record changed since; raises :class:`RuntimeError` when storing fails.
+    """
+    return bool(update_many(spec, [(record, version)]).stored)
+
+
+def update_many(spec: ConnSpec, records: list[tuple[dict[str, Any], str]]) -> Updated:
+    """Store each ``(record, version)`` like :func:`update`, many per SSH call.
+
+    Raises :class:`UpdateError` at the first call that fails; the records stored
+    up to then, in earlier calls or in that one, stay stored.
+    """
+    done = Updated()
+    for batch in _update_batches(records):
+        res = call(spec, ["update", *batch])
+        for line in res.stdout.splitlines():
+            outcome, _, job_id = line.partition(" ")
+            if outcome == "stored":
+                done.stored.append(job_id)
+            elif outcome == "changed":
+                done.changed.append(job_id)
+        if res.returncode != 0:
+            job_ids = ", ".join(job_id for job_id in batch[0::3] if job_id not in done.stored + done.changed)
+            raise UpdateError(f"could not store the records of jobs {job_ids}: {ssh.failure(res)}", done.stored)
+    return done
+
+
+def _update_batches(records: list[tuple[dict[str, Any], str]]) -> list[list[str]]:
+    """``[job_id, version, base64 record, ...]`` lists of at most ``_UPDATE_BATCH_CHARS`` each, or one record if it is longer."""
+    batches: list[list[str]] = []
+    batch: list[str] = []
+    batch_chars = 0
+    for record, version in records:
+        document = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
+        triple = [str(record["job_id"]), version, base64.b64encode(document.encode("utf-8")).decode("ascii")]
+        triple_chars = sum(len(part) + 1 for part in triple)
+        if batch and batch_chars + triple_chars > _UPDATE_BATCH_CHARS:
+            batches.append(batch)
+            batch, batch_chars = [], 0
+        batch += triple
+        batch_chars += triple_chars
+    if batch:
+        batches.append(batch)
+    return batches
+
+
+def read(spec: ConnSpec, job_id: str) -> Stored:
+    """The record of ``job_id`` as stored; an empty one at :data:`ABSENT` if the job has none."""
+    found = read_many(spec, [job_id])
+    return found[0] if found else Stored({}, ABSENT)
+
+
+def read_many(spec: ConnSpec, job_ids: list[str]) -> list[Stored]:
+    """The records of ``job_ids`` that exist, as stored."""
+    wanted = set(job_ids)
+    return [item for item in _read_stored(spec, ["list", 0, *job_ids]) if job_id_of(item.record) in wanted]
 
 
 def list_recent(spec: ConnSpec, since_minutes: int, job_ids: list[str]) -> list[JobRecord]:
@@ -218,22 +346,29 @@ def list_all(spec: ConnSpec) -> list[JobRecord]:
     return _read(spec, ["all"])
 
 
+def list_all_stored(spec: ConnSpec) -> list[Stored]:
+    """Every record on the cluster as stored."""
+    return _read_stored(spec, ["all"])
+
+
 def _read(spec: ConnSpec, args: list[object]) -> list[JobRecord]:
     records = []
-    for raw in _read_raw(spec, args):
+    for item in _read_stored(spec, args):
         try:
-            records.append(JobRecord.from_dict(raw))
+            records.append(JobRecord.from_dict(item.record))
         except (TypeError, KeyError):
             continue  # a damaged file must not hide the others
     return records
 
 
-def _read_raw(spec: ConnSpec, args: list[object]) -> list[dict[str, Any]]:
+def _read_stored(spec: ConnSpec, args: list[object]) -> list[Stored]:
     res = call(spec, args)
     if res.returncode != 0:
         raise RuntimeError(f"could not read the job records: {ssh.failure(res)}")
-    documents = []
-    for line in res.stdout.splitlines():
+    found = []
+    # One record per line; not splitlines(), which also splits at characters a
+    # JSON string may hold as they are, such as U+2028.
+    for line in res.stdout.split("\n"):
         if not line.strip():
             continue
         try:
@@ -241,5 +376,5 @@ def _read_raw(spec: ConnSpec, args: list[object]) -> list[dict[str, Any]]:
         except ValueError:
             continue  # a damaged file must not hide the others
         if isinstance(document, dict):
-            documents.append(document)
-    return documents
+            found.append(Stored(document, hashlib.sha256(line.encode("utf-8")).hexdigest()))
+    return found
