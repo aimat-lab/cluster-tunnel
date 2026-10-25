@@ -13,6 +13,8 @@ live tunnel, respect the compute-budget guard, and follow HPC etiquette.
 | `reference.md` | Full `ctun` CLI reference: every command, flag, JSON output, failure modes. | On demand, when exact flags are needed. |
 | `cluster-etiquette.md` | HPC etiquette, Slurm patterns, the budget guard explained. | On demand, when planning real cluster work. |
 | `monitoring-jobs.md` | Live-monitoring a running Slurm job with the `Monitor` tool over the tunnel. | On demand, after submitting a job. |
+| `writing-notes.md` | How to write a job's `--note`: what goes in, what stays out, examples. | On demand, before a submission with a note. |
+| `writing-notes.local.md` | Your own directions for notes. Not part of this repo: you create it. | With `writing-notes.md`. |
 
 This follows the Agent Skills **progressive-disclosure** pattern: `SKILL.md`
 stays short and links one level deep to the reference files, which cost no
@@ -53,6 +55,12 @@ it directly with `/cluster-tunnel`. Run `/doctor` if it isn't being discovered.
 - The dynamic `` !`ctun status` `` block in `SKILL.md` injects a live
   tunnel-status snapshot at invocation time. Remove it if you'd rather the agent
   always run `status` itself.
+- Your own rules for job notes (length, language, what to always mention) go
+  in `writing-notes.local.md` next to `SKILL.md` in the installed skill. The
+  agent reads it before every note, and it wins over `writing-notes.md`. This
+  repo never ships that file, so an update that copies the skill's files over
+  keeps it; deleting the skill folder before copying does not. The VS Code
+  extension creates and opens it with "Customize Note Writing…".
 - Per-cluster specifics (partitions, modules, paths) belong in each cluster's
   `description`/`restrictions` in `ctun config`, surfaced by `ctun info` — not
   hard-coded here — so the skill stays generic across clusters.

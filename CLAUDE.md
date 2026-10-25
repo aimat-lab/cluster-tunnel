@@ -105,7 +105,9 @@ the Rich-formatted help. One file per command domain:
 ### Other top-level directories
 
 - `skill/` — the agent skill: `SKILL.md` (entry point), `reference.md` (full CLI
-  reference), `cluster-etiquette.md`, `monitoring-jobs.md`, `python-projects.md`.
+  reference), `cluster-etiquette.md`, `monitoring-jobs.md`, `python-projects.md`,
+  `writing-notes.md` (job notes; the user's own `writing-notes.local.md` beside
+  it is never shipped from here).
   This is meant to be installed/copied elsewhere (e.g. `~/.claude/skills/`); if
   you have it installed globally, re-sync the installed copy after editing here.
 - `systemd/` — a systemd **user** service that runs `ctun logout` on shutdown/logout.
