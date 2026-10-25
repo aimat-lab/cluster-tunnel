@@ -20,6 +20,18 @@ It ships two things:
 
 Design rationale lives in `DESIGN.md`; `PLAN.md` is the historical build plan.
 
+The VS Code extension lives in its own repo,
+<https://github.com/aimat-lab/cluster-tunnel-vscode>, and talks to ctun only
+through the CLI. A change to any of these breaks it, so change them only together
+with the extension:
+
+- the JSON of `status --json`, `jobs --json --since`, `logs --json` and
+  `info --json`;
+- `login --credentials-stdin`, `login --interactive`, `logout`, `run --`,
+  `config --path` and `--version`;
+- the login bridge (`login_bridge.py`): the `CTUN_LOGIN_BRIDGE` variable and its
+  request and reply lines.
+
 ## Repository layout
 
 ### `cluster_tunnel/` — the CLI package
