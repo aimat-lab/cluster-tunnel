@@ -20,12 +20,13 @@ clusters:
 
   # HOREKA @ KIT
   # ===============================
-  # HoreKa — KIT's NHR (national tier-2) supercomputer. CPU + GPU nodes;
-  # GPU jobs go to the 'accelerated' partition, CPU-only work to 'cpuonly'.
-  # Login requires a one-time password (OTP).
+  # HoreKa 2 — KIT's NHR (national tier-2) supercomputer, successor of HoreKa
+  # (legacy HoreKa, horeka.scc.kit.edu, is decommissioned end of 2026). One
+  # login host per architecture: hk2-x86 and hk2-a64 (ARM, e.g. the B200 nodes
+  # of 'gpu-b200'). Login: OTP, then service password.
   # ===============================
   # horeka:
-  #   host: horeka.scc.kit.edu
+  #   host: hk2-x86.scc.kit.edu      # hk2-a64.scc.kit.edu for the ARM (B200) nodes
   #   user: ab1234
   #   ssh_alias: horeka              # optional: reuse a ~/.ssh/config Host block
   #   requires_otp: true             # advisory: surfaced via `ctun info`
@@ -33,11 +34,11 @@ clusters:
   #   known_hosts_file: ~/.config/cluster-tunnel/known_hosts   # host key (default: accept-new)
   #   control_persist: "24h"
   #   description:                   # notes for the agent, shown by `ctun info` (one string
-  #     - HoreKa @ KIT (NHR). GPU jobs -> partition 'accelerated'.   # also works, but only a
+  #     - HoreKa 2 @ KIT (NHR). GPU jobs -> partition 'gpu-h100'.    # also works, but only a
   #     - Never run compute on the login node.                       # list takes `ctun note`)
   #   restrictions:                  # advisory only; surfaced via `ctun info`
-  #     max_job_runtime: "48:00:00"
-  #     allowed_partitions: [accelerated, cpuonly]
+  #     max_job_runtime: "2-00:00:00"  # 'cpu': 3-00:00:00
+  #     allowed_partitions: [cpu, gpu-h100, gpu-h200, dev-cpu, dev-gpu-h100]
   #   budget:                        # omit to run unguarded
   #     script: budget/horeka.sh     # prints job-hours used since the session started
   #     session_limit: 500
@@ -53,6 +54,7 @@ clusters:
   # ===============================
   # HAICORE — Helmholtz AI COmpute REsources @ KIT (NHR): a GPU cluster for
   # AI / machine-learning workloads. Login requires a one-time password (OTP).
+  # From December 2026 HAICORE 3.0 runs on the HoreKa 2 login hosts (see above).
   # ===============================
   # haicore:
   #   host: haicore.scc.kit.edu
@@ -107,6 +109,7 @@ clusters:
   # bwUniCluster 3.0 (uc3) — Baden-Württemberg bwHPC general-purpose cluster,
   # operated at KIT. The login host uc3.scc.kit.edu is load-balanced over the
   # login nodes and requires 2FA. KIT users prefix their username with 'ka_'.
+  # Reachable only from BelWü networks (use the VPN off campus).
   # ===============================
   # bwuni3:
   #   host: uc3.scc.kit.edu
@@ -119,6 +122,29 @@ clusters:
   #     session_limit: 200           # max job-hours per session (or pass `ctun login -l N`)
   #     unit: jobh
   #     guard_commands: [sbatch, srun, salloc, aslurm, aslurmx]
+  #     fail_mode: closed
+
+  # JUPITER @ JSC
+  # ===============================
+  # JUPITER — the exascale system at Jülich Supercomputing Centre (EuroHPC).
+  # SSH key only (no password): upload the public key with a `from=` clause in
+  # JuDoor. A TOTP prompt follows the key only if MFA is enabled in JuDoor.
+  # ===============================
+  # jupiter:
+  #   host: login.jupiter.fz-juelich.de
+  #   user: ab1234                   # JuDoor username
+  #   requires_password: false       # key-only login
+  #   requires_otp: true             # set false if MFA is off in JuDoor
+  #   description:
+  #     - JUPITER @ JSC. Every job needs --account=<budget>; nodes are billed whole.
+  #   restrictions:                  # advisory only; surfaced via `ctun info`
+  #     max_job_runtime: "12:00:00"
+  #     allowed_partitions: [booster]
+  #   budget:                        # omit / leave session_limit unset to run unguarded
+  #     script: budget/jupiter.sh    # bundled; job wall-clock hours since session start
+  #     session_limit: 200           # max job-hours per session (or pass `ctun login -l N`)
+  #     unit: jobh
+  #     guard_commands: [sbatch, srun, salloc]
   #     fail_mode: closed
 
 webui:

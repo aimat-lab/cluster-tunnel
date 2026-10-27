@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **JUPITER (JSC) in the example config**, with a bundled budget script
+  `budget_templates/jupiter.sh` (the standard job-hours probe).
+
+### Changed
+
+- **The example HoreKa entry targets HoreKa 2** (`hk2-x86.scc.kit.edu` /
+  `hk2-a64.scc.kit.edu`) and its partitions; legacy HoreKa is decommissioned at
+  the end of 2026. The HAICORE and bwUniCluster entries note the move to the
+  HoreKa 2 hosts and the BelWü-only access.
+
 ## [0.9.0] - 2026-10-22
 
 ### Added
