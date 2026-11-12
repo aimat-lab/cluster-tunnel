@@ -5,6 +5,8 @@ from __future__ import annotations
 import rich_click as click
 
 from cluster_tunnel.cli import configcmd
+from cluster_tunnel.cli.errors import fail
+from cluster_tunnel.constants import ExitCode
 
 
 class HostKeyCommandsMixin:
@@ -17,8 +19,13 @@ class HostKeyCommandsMixin:
         help="Pin the key the server presents now (shows the change, asks first).",
     )
     @click.option("-y", "--yes", "assume_yes", is_flag=True, help="With --pin: pin without asking.")
+    @click.option(
+        "--expect", "expect", default=None, metavar="SHA256:...",
+        help="With --pin: pin without asking, only if the server presents this fingerprint "
+        "(e.g. the one its operators publish; see `ctun presets`).",
+    )
     @click.option("-j", "--json", "as_json", is_flag=True, help="Machine-readable JSON output.")
-    def hostkey_command(self, do_pin: bool, assume_yes: bool, as_json: bool) -> None:
+    def hostkey_command(self, do_pin: bool, assume_yes: bool, expect: str | None, as_json: bool) -> None:
         """Show the host key a cluster presents, or pin it: ctun -t <cluster> hostkey [--pin].
 
         The key is fetched over a fresh connection that stops before logging in
@@ -36,12 +43,20 @@ class HostKeyCommandsMixin:
         change, unless -y/--yes; a key that differs from the trusted one can only
         be re-pinned from a terminal.
 
+        `--pin --expect <fingerprint>` pins without asking, but only if the
+        server presents exactly that fingerprint (one its operators publish, as
+        `ctun presets` lists them); any other key exits 14
+        (`ctun-error: host_key_mismatch`) and nothing is pinned. So does a key
+        that changes between showing it and pinning it.
+
         Exits 1 when the server presents a different key than the one logins trust.
         """
         from cluster_tunnel import api
 
         if assume_yes and not do_pin:
             raise click.UsageError("-y/--yes only goes with --pin.")
+        if expect is not None and not do_pin:
+            raise click.UsageError("--expect only goes with --pin.")
         if as_json and do_pin:
             raise click.UsageError("--json shows the key; use it without --pin.")
 
@@ -70,7 +85,13 @@ class HostKeyCommandsMixin:
                     f"`ctun -t {name} hostkey --pin` from a terminal."
                 )
             return
-        self._pin_host_key(name, cluster, status, assume_yes, changed)
+        if expect is not None and status.offered.fingerprint != expect:
+            fail(
+                f"'{name}' presents {status.offered.fingerprint}, not the expected {expect}. Don't log "
+                "in until you know why; nothing was pinned.",
+                ExitCode.HOST_KEY_MISMATCH,
+            )
+        self._pin_host_key(name, cluster, status, assume_yes or expect is not None, changed, expect)
 
     def _show_host_key(self, name: str, status) -> None:
         key = status.offered
@@ -110,7 +131,9 @@ class HostKeyCommandsMixin:
                 fg="yellow",
             )
 
-    def _pin_host_key(self, name: str, cluster, status, assume_yes: bool, changed: bool) -> None:
+    def _pin_host_key(
+        self, name: str, cluster, status, assume_yes: bool, changed: bool, expect: str | None = None
+    ) -> None:
         """Show what pinning changes, then pin (after asking, unless --yes)."""
         from cluster_tunnel import api, configedit, hostkey
         from cluster_tunnel import config as config_mod
@@ -140,10 +163,13 @@ class HostKeyCommandsMixin:
                 fg="yellow",
             )
         click.echo()
-        click.secho(
-            "Compare the fingerprint with the one your cluster's operators publish before you confirm.",
-            fg="yellow",
-        )
+        if expect is not None:
+            click.secho("It is the fingerprint you expected.", fg="green")
+        else:
+            click.secho(
+                "Compare the fingerprint with the one your cluster's operators publish before you confirm.",
+                fg="yellow",
+            )
 
         tty = configcmd._stdin_is_tty()
         if changed and not tty:
@@ -162,6 +188,8 @@ class HostKeyCommandsMixin:
 
         try:
             api.pin_host_key(name, fingerprint, replace=changed, config_path=self.config_path)
+        except api.HostKeyMismatch as exc:  # the server changed its key since it was shown
+            fail(str(exc), ExitCode.HOST_KEY_MISMATCH)
         except (api.HostKeyError, api.ConfigError) as exc:
             raise click.ClickException(str(exc)) from exc
         backup = f" The previous config is in {path.name}.bak." if edit.changes else ""

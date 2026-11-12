@@ -26,6 +26,8 @@ Example::
 
 from __future__ import annotations
 
+import re
+import shutil
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -42,6 +44,7 @@ from cluster_tunnel import jobs as jobs_mod
 from cluster_tunnel import login_bridge
 from cluster_tunnel import notes as notes_mod
 from cluster_tunnel import popup, session, ssh, wsl
+from cluster_tunnel import presets as presets_mod
 from cluster_tunnel import records as records_mod
 from cluster_tunnel import transfer as transfer_mod
 from cluster_tunnel.budget import Decision
@@ -50,9 +53,11 @@ from cluster_tunnel.errors import (
     BudgetBlocked,
     BudgetExhausted,
     BudgetGuardError,
+    ClusterExistsError,
     ClusterTunnelError,
     ConfigError,
     HostKeyError,
+    HostKeyMismatch,
     LoginError,
     LoginRequired,
     NoteReferenceInvalid,
@@ -64,6 +69,7 @@ from cluster_tunnel.errors import (
 from cluster_tunnel.hostkey import HostKey
 from cluster_tunnel.jobs import Job
 from cluster_tunnel.popup import Credentials
+from cluster_tunnel.presets import Preset
 from cluster_tunnel.records import JobRecord
 from cluster_tunnel.ssh import ConnSpec
 
@@ -72,14 +78,15 @@ __all__ = [
     "load_config", "clusters", "connection", "is_live", "status", "login", "logout",
     "preflight", "budget", "run", "feed_script", "upload", "download", "jobs",
     "edit_job", "edit_jobs", "projects", "rename_project", "host_key", "pin_host_key",
+    "presets", "add_cluster", "remove_cluster",
     # results and inputs
     "Credentials", "Result", "ClusterStatus", "ClusterJobs", "LoginResult", "LogoutResult", "HostKeyStatus",
-    "ClusterProjects", "ProjectRename", "RecordEdit",
-    "Decision", "Job", "JobRecord", "HostKey", "ConnSpec", "Config", "Cluster",
+    "ClusterProjects", "ProjectRename", "RecordEdit", "AddedCluster", "RemovedCluster",
+    "Decision", "Job", "JobRecord", "HostKey", "ConnSpec", "Config", "Cluster", "Preset",
     # errors
-    "ClusterTunnelError", "ConfigError", "UnknownClusterError", "LoginRequired",
+    "ClusterTunnelError", "ConfigError", "UnknownClusterError", "ClusterExistsError", "LoginRequired",
     "LoginError", "BudgetBlocked", "BudgetExhausted", "BudgetGuardError", "TransportError",
-    "HostKeyError", "NoteReferenceInvalid", "RecordError",
+    "HostKeyError", "HostKeyMismatch", "NoteReferenceInvalid", "RecordError",
 ]
 
 PathLike = Union[str, Path]
@@ -273,6 +280,42 @@ class HostKeyStatus:
             "known_hosts_file": self.known_hosts_file,
             "conflicts": self.conflicts,
         }
+
+
+@dataclass
+class AddedCluster:
+    """A cluster :func:`add_cluster` wrote into the config."""
+
+    cluster: str
+    entry: dict  # the entry as written under clusters.<cluster>
+    config_path: str
+    preset: Optional[str] = None  # the preset it came from
+    created: bool = False  # the config file did not exist and was created first
+    backup: Optional[str] = None  # the previous config (<config>.bak); None if created
+    budget_script: Optional[str] = None  # the bundled script copied next to the config, if one was
+    fingerprint: Optional[str] = None  # the preset's published host-key fingerprint, to pin with
+    fingerprint_source: Optional[str] = None
+
+    def as_dict(self) -> dict:
+        """As ``ctun add --json`` prints it."""
+        return asdict(self)
+
+
+@dataclass
+class RemovedCluster:
+    """A cluster :func:`remove_cluster` took out of the config."""
+
+    cluster: str
+    config_path: str
+    backup: str  # the previous config (<config>.bak)
+    logged_out: bool  # its tunnel was live and is now closed
+    known_hosts_file: Optional[str] = None  # where its pinned keys were
+    keys_removed: int = 0  # pinned keys removed for its host
+    keys_kept: Optional[str] = None  # why its pinned keys stayed, if they did
+
+    def as_dict(self) -> dict:
+        """As ``ctun remove --json`` prints it."""
+        return asdict(self)
 
 
 # --- config --------------------------------------------------------------------
@@ -590,8 +633,10 @@ def pin_host_key(
 ) -> HostKeyStatus:
     """Pin ``cluster``'s host key: the one with ``fingerprint``, as a person confirmed it.
 
-    Checks the key again (:func:`host_key`) and refuses (:class:`HostKeyError`)
-    unless the server presents exactly that fingerprint, and, without
+    Checks the key again (:func:`host_key`) and refuses unless the server
+    presents exactly that fingerprint (:class:`HostKeyMismatch`, exit code 14:
+    so a front end pins a preset's published fingerprint with this call and
+    learns of any other key), and (:class:`HostKeyError`), without
     ``replace``, when logins trust a different key for the host: replacing a
     trusted key is for a person who knows why it changed. The key then replaces
     any earlier one for the host in the cluster's ``known_hosts_file`` (default:
@@ -607,9 +652,7 @@ def pin_host_key(
     spec = ssh.conn_spec(config, cluster)
     status = host_key(cluster, config=config, config_path=config_path)
     if status.offered.fingerprint != fingerprint:
-        raise HostKeyError(
-            f"'{cluster}' presents {status.offered.fingerprint}, not {fingerprint}; nothing was pinned."
-        )
+        raise HostKeyMismatch(cluster, status.offered.fingerprint, fingerprint)
     if status.trust == "changed" and not replace:
         raise HostKeyError(
             f"logins to '{cluster}' trust a different key than the one it presents; replace it "
@@ -624,6 +667,186 @@ def pin_host_key(
     if edit.changes:
         configedit.apply(edit, backup=True)
     return HostKeyStatus(cluster, status.offered, "known", [status.offered], True, file)
+
+
+# --- cluster entries ---------------------------------------------------------------
+
+#: A cluster name: what `-t` takes, a file name in the cache dir.
+_CLUSTER_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,63}")
+#: A login host: a DNS name or an IPv4 address (an ssh_alias goes in by hand).
+_HOST = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?")
+#: A username on the cluster.
+_USER = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}")
+
+
+def presets() -> list[Preset]:
+    """The clusters ctun knows, ready for :func:`add_cluster` (``ctun presets``)."""
+    return list(presets_mod.PRESETS)
+
+
+def add_cluster(
+    name: str,
+    *,
+    user: str,
+    preset: Optional[str] = None,
+    host: Optional[str] = None,
+    requires_otp: Optional[bool] = None,
+    requires_password: Optional[bool] = None,
+    session_limit: Optional[float] = None,
+    description: Optional[Sequence[str]] = None,
+    config_path: Optional[PathLike] = None,
+) -> AddedCluster:
+    """Add the cluster ``name`` to the config, as ``ctun add`` does.
+
+    With ``preset`` (a name from :func:`presets`), its host, login prompts,
+    description and budget guard (its bundled script, with ``guard_scope:
+    every-command``) are the entry's; ``host``, ``requires_otp``,
+    ``requires_password``, ``session_limit`` and ``description`` override them.
+    Without one, ``host`` is required and the cluster has no budget guard.
+
+    The entry is added to the config file in place (comments and layout stay;
+    the previous file is kept as ``<config>.bak``); a missing config is created
+    first, as ``ctun config --init`` would. A preset's budget script is copied
+    next to the config unless one is there already. The host key is not pinned
+    here: pin it with :func:`pin_host_key`, with the returned ``fingerprint``
+    where the preset has a published one.
+
+    Raises :class:`ClusterExistsError` if the config has a cluster ``name``
+    already, and :class:`ConfigError` for an invalid name, host or user, an
+    unknown preset, or a config that can't be edited safely; then nothing is
+    written.
+    """
+    if not isinstance(name, str) or not _CLUSTER_NAME.fullmatch(name):
+        raise ConfigError(
+            f"invalid cluster name {name!r}: a letter, then up to 63 letters, digits, '_', '.' or '-'"
+        )
+    if not isinstance(user, str) or not _USER.fullmatch(user):
+        raise ConfigError(f"invalid user {user!r}: letters, digits, '_', '.' or '-', not starting with '-'")
+    chosen: Optional[Preset] = None
+    if preset is not None:
+        try:
+            chosen = presets_mod.get(preset)
+        except KeyError as exc:
+            raise ConfigError(exc.args[0]) from None
+    host = host if host is not None else (chosen.host if chosen else None)
+    if host is None:
+        raise ConfigError(
+            f"no host for '{name}': give host=" + (f" (preset '{chosen.name}' has none)" if chosen else "")
+        )
+    if not isinstance(host, str) or not _HOST.fullmatch(host) or ".." in host:
+        raise ConfigError(f"invalid host {host!r}: a DNS name or IPv4 address")
+
+    entry: dict = {"host": host, "user": user}
+    otp = requires_otp if requires_otp is not None else (chosen.requires_otp if chosen else False)
+    entry["requires_otp"] = bool(otp)
+    password = requires_password if requires_password is not None else (
+        chosen.requires_password if chosen else True)
+    if not password:
+        entry["requires_password"] = False
+    notes = list(description) if description is not None else (list(chosen.description) if chosen else [])
+    notes = [note.strip() for note in notes if isinstance(note, str) and note.strip()]
+    if notes:
+        entry["description"] = notes
+    if chosen is not None and chosen.budget is not None:
+        budget_entry = chosen.budget.entry()
+        if session_limit is not None:
+            budget_entry["session_limit"] = session_limit
+        entry["budget"] = budget_entry
+    elif session_limit is not None:
+        raise ConfigError("session_limit needs a budget script: only a preset brings one")
+
+    path = config_mod.resolve_config_path(_path_arg(config_path))
+    created = not path.exists()
+    if created:
+        config_mod.setup_if_necessary(_path_arg(config_path))
+    try:
+        existing = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        raise ConfigError(f"cannot read {path}: {exc}") from exc
+    if isinstance(existing, dict) and name in (existing.get("clusters") or {}):
+        raise ClusterExistsError(name)
+
+    via = f" (preset {chosen.name})" if chosen else ""
+    comment = f"# added via ctun add{via}, {time.strftime('%Y-%m-%d')}"
+    try:
+        edit = configedit.plan_add_cluster(path, name, entry, comment)
+    except configedit.EditError as exc:
+        raise ConfigError(f"cannot add '{name}' to {path}: {exc}") from exc
+
+    copied = None
+    if chosen is not None and chosen.budget is not None:
+        script = config_mod.budget_script_path(path, name, entry["budget"]["script"])
+        if not script.exists():
+            script.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(config_mod.PACKAGE_DIR / "budget_templates" / chosen.budget.script, script)
+            copied = str(script)
+    backup = configedit.apply(edit, backup=not created)
+    return AddedCluster(
+        cluster=name,
+        entry=entry,
+        config_path=str(path),
+        preset=chosen.name if chosen else None,
+        created=created,
+        backup=str(backup) if backup else None,
+        budget_script=copied,
+        fingerprint=chosen.fingerprint if chosen else None,
+        fingerprint_source=chosen.fingerprint_source if chosen else None,
+    )
+
+
+def remove_cluster(name: str, *, config_path: Optional[PathLike] = None) -> RemovedCluster:
+    """Remove the cluster ``name`` from the config, as ``ctun remove --yes`` does.
+
+    A live tunnel to it is closed and its session and command log cleared
+    first (:func:`logout`). Its pinned host keys go from its
+    ``known_hosts_file`` unless another cluster in the config uses the same
+    host and file, or the entry reaches the host through an ``ssh_alias``
+    (then ctun can't tell the name ssh files the key under); ``keys_kept``
+    says why they stayed. The entry's lines go from the config file (comments
+    around it stay; the previous file is kept as ``<config>.bak``). Budget
+    scripts are left alone.
+
+    Raises :class:`UnknownClusterError` if there is no such cluster,
+    :class:`ConfigError` if the config can't be edited safely, and
+    :class:`HostKeyError` if the pinned keys can't be removed; then the config
+    is unchanged.
+    """
+    path = config_mod.resolve_config_path(_path_arg(config_path))
+    config = load_config(config_path)
+    entry = _entry(config, name)
+    try:
+        edit = configedit.plan_remove_cluster(path, name)
+    except configedit.EditError as exc:
+        raise ConfigError(f"cannot remove '{name}' from {path}: {exc}") from exc
+
+    spec = ssh.conn_spec(config, name)
+    logged_out = logout(name, config=config, config_path=config_path)[0].was_live
+
+    file, removed, kept = entry.known_hosts_file, 0, None
+    if file:
+        sharing = [
+            other for other, cluster in config.clusters.items()
+            if other != name and cluster.host == entry.host and cluster.known_hosts_file == file
+        ]
+        if entry.ssh_alias:
+            kept = f"'{name}' reaches its host through the ssh alias '{entry.ssh_alias}'"
+        elif sharing:
+            kept = f"{', '.join(sorted(sharing))} uses the same host and key file"
+        else:
+            host = entry.host
+            removed = len(_host_keys(name, "read", lambda: hostkey_mod.pinned(spec, file, host)))
+            if removed:
+                _host_keys(name, "remove", lambda: hostkey_mod.unpin(spec, file, host))
+    backup = configedit.apply(edit, backup=True)
+    return RemovedCluster(
+        cluster=name,
+        config_path=str(path),
+        backup=str(backup),
+        logged_out=logged_out,
+        known_hosts_file=file,
+        keys_removed=removed,
+        keys_kept=kept,
+    )
 
 
 # --- commands ----------------------------------------------------------------------

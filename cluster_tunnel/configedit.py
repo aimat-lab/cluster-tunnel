@@ -1,5 +1,5 @@
-"""Surgical edits of the user's YAML config: `ctun note`, `ctun config --migrate`
-and `ctun hostkey --pin`.
+"""Surgical edits of the user's YAML config: `ctun note`, `ctun config --migrate`,
+`ctun hostkey --pin`, `ctun add` and `ctun remove`.
 
 The config is a hand-edited, commented file, so ctun never re-serialises it.
 Each edit replaces or inserts only the lines of the values it changes, at
@@ -156,6 +156,111 @@ def plan_host_key_pin(path: Path, cluster: str, known_hosts_file: str) -> Edit:
     _verify(old, new, change)
     changes = [f"{cluster}: {key} -> {value}" for key, value in updates.items()]
     return Edit(path=path, old=old, new=new, newline=newline, changes=changes, label="pinned")
+
+
+def plan_add_cluster(path: Path, cluster: str, entry: dict, comment: str | None = None) -> Edit:
+    """Compute (without writing) the config with a new cluster ``cluster: entry``.
+
+    The entry goes in after the last cluster, indented like the others; into a
+    ``clusters:`` with no clusters yet (only the example's comments, or
+    ``{}``) right below the key; and as a new ``clusters:`` at the end of a file
+    without one. ``comment`` goes on a line of its own above the entry. Raises
+    :class:`EditError` if the cluster exists or ``clusters`` can't take an entry
+    safely (a ``{...}`` mapping with entries in it).
+    """
+    old, newline = _read(path)
+    root = _compose(old) if old.strip() else None
+    if root is not None and not isinstance(root, yaml.MappingNode):
+        raise EditError("the config is not a YAML mapping")
+    clusters = _entry(root, "clusters") if root is not None else None
+
+    def block(column: int) -> str:
+        lines = []
+        if comment:
+            lines.append(" " * column + comment)
+        lines.append(" " * column + _render_entry_key(cluster) + ":")
+        lines.append(_render_mapping(entry, column + 2))
+        return "\n".join(lines)
+
+    if clusters is None:
+        tail = "" if not old or old.endswith("\n") else "\n"
+        new = old + tail + "clusters:\n" + block(2) + "\n"
+    else:
+        key, value = clusters
+        if isinstance(value, yaml.MappingNode) and value.value:
+            if value.flow_style:
+                raise EditError("'clusters' is a {...} mapping; turn it into 'name:' lines by hand first")
+            if _entry(value, cluster) is not None:
+                raise EditError(f"the config already has a cluster '{cluster}'")
+            column = value.value[0][0].start_mark.column
+            at = _line_end(old, _content_end(old, value))
+            new = _splice(old, [(at, at, "\n" + block(column))])
+        elif isinstance(value, yaml.MappingNode) or (
+            isinstance(value, yaml.ScalarNode) and value.value == "" and value.style is None
+        ):
+            # `clusters:` (followed by comments only) or `clusters: {}`: the
+            # entry goes right below the key; a comment on the key's line stays.
+            at = old.index(":", key.end_mark.index) + 1
+            end = _content_end(old, value) if isinstance(value, yaml.MappingNode) else at
+            kept = re.match(r"[ \t]+#.*$", old[end:_line_end(old, end)])
+            if kept:
+                end += kept.end()
+            replacement = (kept.group(0) if kept else "") + "\n" + block(key.start_mark.column + 2)
+            new = _splice(old, [(at, end, replacement)])
+        else:
+            raise EditError("'clusters' is neither a mapping nor empty")
+
+    def change(data: dict) -> dict:
+        if not isinstance(data.get("clusters"), dict):
+            data["clusters"] = {}
+        data["clusters"][cluster] = entry
+        return data
+
+    _verify(old, new, change)
+    return Edit(path=path, old=old, new=new, newline=newline,
+                changes=[f"{cluster}: added"], label="with " + cluster)
+
+
+def plan_remove_cluster(path: Path, cluster: str) -> Edit:
+    """Compute (without writing) the config without ``cluster``'s entry.
+
+    Removes the entry's own lines (its key and everything indented under it);
+    comments around it stay. Removing the last cluster leaves ``clusters: {}``.
+    Raises :class:`EditError` if there is no such cluster.
+    """
+    old, newline = _read(path)
+    root = _compose(old)
+    clusters = _entry(root, "clusters")
+    if clusters is None or not isinstance(clusters[1], yaml.MappingNode) or _entry(clusters[1], cluster) is None:
+        raise EditError(f"no cluster '{cluster}' in the config")
+    key, mapping = clusters
+    if mapping.flow_style:
+        raise EditError("'clusters' is a {...} mapping; remove the entry by hand")
+    name_node, value = _entry(mapping, cluster)
+    start = _line_start(old, name_node.start_mark.index)
+    if old[start:name_node.start_mark.index].strip():
+        raise EditError(f"'{cluster}' does not start its own line; remove it by hand")
+    end = _line_end(old, _content_end(old, value))
+    end = end + 1 if end < len(old) else end  # its line break too
+    if start > 0:  # the comment `ctun add` wrote above it goes too
+        above = _line_start(old, start - 1)
+        line = old[above:start - 1]
+        if line[: len(line) - len(line.lstrip())] == old[start:name_node.start_mark.index] and \
+                ADDED_COMMENT.fullmatch(line.strip()):
+            start = above
+    edits = [(start, end, "")]
+    if len(mapping.value) == 1:
+        at = old.index(":", key.end_mark.index) + 1
+        edits.append((at, at, " {}"))
+    new = _splice(old, edits)
+
+    def change(data: dict) -> dict:
+        del data["clusters"][cluster]
+        return data
+
+    _verify(old, new, change)
+    return Edit(path=path, old=old, new=new, newline=newline,
+                changes=[f"{cluster}: removed"], label="without " + cluster)
 
 
 def apply(edit: Edit, backup: bool = False) -> Path | None:
@@ -398,6 +503,42 @@ _Dumper.add_representer(
         "tag:yaml.org,2002:str", data, style="|" if "\n" in data else None
     ),
 )
+
+
+class _EntryDumper(_Dumper):
+    """Also indents a list under its key, as the example config writes them."""
+
+    def increase_indent(self, flow: bool = False, indentless: bool = False):  # noqa: ARG002
+        return super().increase_indent(flow, False)
+
+
+_WORD = re.compile(r"[A-Za-z0-9_.-]+")
+
+# A list of plain words is written on one line, `[sbatch, srun]`; any other as `- item` lines.
+_EntryDumper.add_representer(
+    list,
+    lambda dumper, data: dumper.represent_sequence(
+        "tag:yaml.org,2002:seq", data,
+        flow_style=bool(data) and all(isinstance(i, str) and _WORD.fullmatch(i) for i in data),
+    ),
+)
+
+#: The comment `ctun add` puts above an entry; `ctun remove` takes it away with it.
+ADDED_COMMENT = re.compile(r"# added via ctun add\b.*$")
+
+
+def _render_entry_key(name: str) -> str:
+    """A mapping key as YAML writes it, quoted where it would read as something else."""
+    return yaml.safe_dump([name], allow_unicode=True, width=float("inf")).rstrip("\n")[2:]
+
+
+def _render_mapping(data: dict, column: int) -> str:
+    """Block-mapping lines for ``data`` (keys in its order), every line at ``column`` or deeper."""
+    out = yaml.dump(
+        data, Dumper=_EntryDumper, sort_keys=False, default_flow_style=False,
+        allow_unicode=True, width=float("inf"), indent=2,
+    )
+    return "\n".join(" " * column + line if line else line for line in out.rstrip("\n").split("\n"))
 
 
 def _render_items(items: list[str], column: int, comment: str | None = None) -> str:

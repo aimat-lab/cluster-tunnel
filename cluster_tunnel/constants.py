@@ -52,6 +52,7 @@ class ExitCode(enum.IntEnum):
     BUDGET_EXHAUSTED = 11    #: Guarded command blocked: usage at/over the limit.
     BUDGET_GUARD_ERROR = 12  #: Guarded command blocked: budget couldn't be verified.
     NOTE_REFERENCE_INVALID = 13  #: `--note` names a job (or commit, in an edit) the cluster doesn't know.
+    HOST_KEY_MISMATCH = 14   #: The server's host key isn't the one expected (`hostkey --pin --expect`).
 
 
 #: Machine-readable markers printed to stderr (``ctun-error: <marker>``) alongside
@@ -62,4 +63,5 @@ ERROR_MARKERS = {
     ExitCode.BUDGET_EXHAUSTED: "budget_exhausted",
     ExitCode.BUDGET_GUARD_ERROR: "budget_guard_error",
     ExitCode.NOTE_REFERENCE_INVALID: "note_reference_invalid",
+    ExitCode.HOST_KEY_MISMATCH: "host_key_mismatch",
 }
