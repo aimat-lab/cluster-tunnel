@@ -148,14 +148,17 @@ meaning.
 
 ## 🚀 Quickstart
 
-**1. Create your config:**
+**1. Add your cluster.** For a cluster ctun knows (`ctun presets` lists them), one
+command writes the entry, creating the config if there is none:
 
 ```console
-$ ctun config --init
-Config ready at /home/you/.config/cluster-tunnel/config.yaml
+$ ctun add horeka --preset horeka --user ab1234
+✓ Added 'horeka' from preset 'horeka' (ab1234@horeka.scc.kit.edu).
 ```
 
-**2. Add your cluster** (`ctun config` opens it in `$EDITOR`):
+For any other cluster give the host yourself (`ctun add mine --host login.example.org
+--user me --otp`), or write the entry by hand: `ctun config --init` creates a starter
+config with commented examples, and `ctun config` opens it in `$EDITOR`:
 
 ```yaml
 clusters:
@@ -167,9 +170,16 @@ clusters:
       - HoreKa @ KIT. GPU jobs go to partition 'accelerated'.
 ```
 
-> The starter config (`ctun config --init`) already ships several commented
-> example clusters. It's usually easiest to just **uncomment one and fill in your
-> own username** rather than write a block from scratch.
+**2. Pin its host key**, so logins accept no other server. A preset carries the
+fingerprint its operators publish, and `--expect` pins the key only if the server
+presents exactly that one:
+
+```console
+$ ctun -t horeka hostkey --pin --expect SHA256:yEe5nJ5hZZ1YbgieWr+phqRZKYbrV7zRe8OR3X03cn0
+```
+
+Without a published fingerprint, `ctun -t <cluster> hostkey --pin` shows the key and
+asks; compare it with what your cluster's operators publish before you confirm.
 
 **3. Log in once** — `-i/--interactive` pops up a small window for your password + OTP
 (and works even when `ctun` has no terminal of its own, e.g. when an agent runs it):
@@ -210,6 +220,30 @@ Global options:
 | `-c, --config <path>` | Use an alternate config file (overrides `$CTUN_CONFIG`). |
 | `-V, --verbose` | Enable debug logging. |
 | `--version` | Print the version. |
+
+### `presets` / `add` / `remove` — set clusters up
+
+```console
+$ ctun presets [--json]                                  # the clusters ctun knows
+$ ctun add <name> --preset <preset> --user <you> [--json]
+$ ctun add <name> --host <login host> --user <you> [--otp] [--no-password]
+$ ctun remove <name> [--yes] [--json]
+```
+
+A preset (bwUniCluster 3.0 `bwuni3`, HoreKa, HAICORE, KCIST, INT-NANO) brings the
+login host, what a login asks for, a description and the bundled budget guard (its
+script, with `guard_scope: every-command`; `-l/--session-limit` changes its limit).
+Where the operators publish the server's host-key fingerprint, `presets` shows it with
+the page it comes from; `--host`, `--otp/--no-otp` and `--no-password` override the
+preset. `add` writes the entry into the config in place (comments and layout stay; the
+previous file is `config.yaml.bak`) and copies the preset's budget script next to the
+config unless one is there; it refuses a name the config has. It does not pin the host
+key: `add` prints the `hostkey --pin` command to run next.
+
+`remove` shows the change and asks first (`--yes` doesn't; without a terminal nothing
+is removed unless `--yes`). It closes a live tunnel to the cluster, removes its pinned
+host key unless another cluster uses the same host, and removes the entry's lines from
+the config, keeping `config.yaml.bak`. Budget scripts stay.
 
 ### `status` — tunnel and session state
 
@@ -267,6 +301,7 @@ tunnel drops) starts a fresh session and resets the budget window.
 $ ctun -t horeka hostkey              # the key the server presents, and what a login makes of it
 $ ctun -t horeka hostkey -j|--json    # machine-readable
 $ ctun -t horeka hostkey --pin        # pin it: shows the change, asks first (-y/--yes: don't ask)
+$ ctun -t horeka hostkey --pin --expect SHA256:...   # pin without asking, only that key
 ```
 
 Until a key is pinned, logins accept an unknown server key on first contact (ssh's
@@ -284,6 +319,11 @@ Compare the fingerprint it shows with the one your cluster's operators publish; 
 list of trusted keys for the cluster: ssh's own known_hosts files and DNS records no
 longer count, and every ssh `ctun` starts for the cluster checks it. Versions before
 0.7.0 can't read a config with these keys.
+
+`--pin --expect <fingerprint>` pins without asking, but only if the server presents
+exactly that fingerprint, such as the one its operators publish (`ctun presets`). Any
+other key exits `14` (`ctun-error: host_key_mismatch`) and pins nothing; so does a key
+that changes between showing it and pinning it.
 
 `hostkey` exits 1 when the server presents a different key than the one logins trust
 (pinned, or known to ssh from earlier): a re-keyed server, or someone in between. Find out
@@ -325,6 +365,7 @@ reserved for ctun's pre-flight failures:
 | `11` | `budget_exhausted` | A guarded command was blocked: session usage is at/over the limit. |
 | `12` | `budget_guard_error` | A guarded command was blocked because the budget could not be verified (fail-closed). |
 | `13` | `note_reference_invalid` | `run --note` names a `job:<id>` the cluster does not know; nothing ran. (`jobs edit --note` also for a `commit:<hash>`; nothing was saved.) |
+| `14` | `host_key_mismatch` | `hostkey --pin`: the server presents another key than the one expected; nothing was pinned. |
 | *N* | — | The remote command's **own** exit code (0–255), propagated unchanged. |
 | `2` | — | Usage error (e.g. no command after `--`). |
 
@@ -573,7 +614,8 @@ except api.BudgetBlocked as exc:  # BudgetExhausted or BudgetGuardError
 | `edit_job` | `ctun jobs edit` for one job: a new project or note in its record |
 | `projects` | `ctun projects list`: every project in the job records, with its number of jobs |
 | `rename_project` | `ctun projects rename`: a project's new name in every job record, nested projects included |
-| `host_key`, `pin_host_key` | `ctun hostkey`, `hostkey --pin`; pins only the fingerprint passed in, and replaces a trusted key only with `replace=True` |
+| `host_key`, `pin_host_key` | `ctun hostkey`, `hostkey --pin`; pins only the fingerprint passed in (another key raises `HostKeyMismatch`), and replaces a trusted key only with `replace=True` |
+| `presets`, `add_cluster`, `remove_cluster` | `ctun presets`, `add`, `remove --yes`; `add_cluster` returns the preset's published `fingerprint` to pin with, and raises `ClusterExistsError` for a name the config has |
 | `budget` | The guard's verdict for any submission right now, probed over the tunnel |
 | `feed_script` | Runs a local bash script on the login node; not guarded, for read-only probes |
 | `connection`, `clusters`, `load_config` | The resolved ssh target and control socket; the config |
@@ -593,7 +635,7 @@ except api.LoginError as exc:
 
 Failures raise `api.ClusterTunnelError` subclasses. The ones `ctun` reports with a stable
 exit code carry it as `exit_code` and `marker`: `LoginRequired` (10), `BudgetExhausted`
-(11), `BudgetGuardError` (12) and `NoteReferenceInvalid` (13). Each function reads the same config as `ctun`
+(11), `BudgetGuardError` (12), `NoteReferenceInvalid` (13) and `HostKeyMismatch` (14). Each function reads the same config as `ctun`
 (`config_path=`, else `$CTUN_CONFIG`, else the default location) and, like `ctun`, must
 run on the machine that holds the tunnel. `cluster_tunnel.api` and `cluster_tunnel.errors`
 are the public interface and follow semantic versioning.

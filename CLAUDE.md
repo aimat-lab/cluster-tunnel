@@ -58,8 +58,12 @@ with the extension:
   **Standard library only**: on Windows its source is streamed to `python3 -I -`
   inside WSL, where `cluster_tunnel` isn't installed.
 - `config.py` — pydantic models + loading/validation of the YAML config.
-- `configedit.py` — changes to an existing config (`note`, `config --migrate`):
-  line-level edits verified by re-parsing; never re-serialises the file.
+- `configedit.py` — changes to an existing config (`note`, `config --migrate`,
+  `hostkey --pin`, `add`, `remove`): line-level edits verified by re-parsing;
+  never re-serialises the file.
+- `presets.py` — the clusters ctun knows (`presets`, `add --preset`): host, login
+  prompts, budget guard, and the operators' published host-key fingerprint with
+  its source (`None` where none is published; never one ctun only saw itself).
 - `session.py` — per-cluster session state (start time + budget limit), in the cache dir.
 - `budget.py` — session-scoped compute-budget guard (runs the cluster's budget
   script over the tunnel and compares usage against the session limit).
@@ -96,6 +100,7 @@ the Rich-formatted help. One file per command domain:
 - `execution.py` — `run` (budget-guarded command execution)
 - `transfer.py` — `upload`, `download`
 - `context.py` — `info`, `note`, `logs` (the agent briefing)
+- `setup.py` — `presets`, `add`, `remove` (grouped under Setup)
 - `configcmd.py` — `config`
 - `webui.py` — `webui` (placeholder)
 - `display.py` — logo/panel rendering; `assets/` holds the logo art
