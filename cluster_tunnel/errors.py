@@ -39,6 +39,15 @@ class UnknownClusterError(ClusterTunnelError):
     """The config has no cluster of that name."""
 
 
+class ClusterExistsError(ConfigError):
+    """:func:`~cluster_tunnel.api.add_cluster` was given a name the config already has;
+    nothing was written."""
+
+    def __init__(self, cluster: str):
+        super().__init__(f"The config already has a cluster '{cluster}'; nothing was written.")
+        self.cluster = cluster
+
+
 class LoginRequired(ClusterTunnelError):
     """There is no live tunnel to the cluster; a person has to log in first."""
 
@@ -127,6 +136,20 @@ class TransportError(ClusterTunnelError):
 
 class HostKeyError(ClusterTunnelError):
     """A host key could not be fetched or pinned, or isn't the one confirmed."""
+
+
+class HostKeyMismatch(HostKeyError):
+    """The server presents another host key than the fingerprint given to pin;
+    nothing was pinned. ``offered`` is the fingerprint the server presents,
+    ``expected`` the one asked for (e.g. a preset's published fingerprint)."""
+
+    exit_code = ExitCode.HOST_KEY_MISMATCH
+
+    def __init__(self, cluster: str, offered: str, expected: str):
+        super().__init__(f"'{cluster}' presents {offered}, not {expected}; nothing was pinned.")
+        self.cluster = cluster
+        self.offered = offered
+        self.expected = expected
 
 
 def budget_blocked(cluster: str, command: Sequence[str], decision: "Decision") -> BudgetBlocked:

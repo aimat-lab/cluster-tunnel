@@ -106,6 +106,25 @@ def test_pin_replaces_only_the_hosts_own_lines(tmp_path: Path) -> None:
 
 
 @needs_tools
+def test_unpin_removes_only_the_hosts_own_lines(tmp_path: Path) -> None:
+    file = str(tmp_path / "known_hosts")
+    bw, bw_fp = _key(tmp_path, "bw", "bw")
+    other, other_fp = _key(tmp_path, "horeka", "other")
+    spec = _spec()
+    hostkey.pin(spec, file, hostkey.parse(f"{bw}\n--\n256 {bw_fp} bw (ED25519)\n"))
+    hostkey.pin(spec, file, hostkey.parse(f"{other}\n--\n256 {other_fp} horeka (ED25519)\n"))
+
+    hostkey.unpin(spec, file, "bw")
+    assert Path(file).read_text(encoding="utf-8") == f"{other}\n"
+    assert hostkey.pinned(spec, file, "bw") == []
+    hostkey.unpin(spec, file, "nobody")  # nothing for it: nothing changes
+    assert Path(file).read_text(encoding="utf-8") == f"{other}\n"
+    hostkey.unpin(spec, str(tmp_path / "missing" / "known_hosts"), "bw")  # no file: nothing to do
+    assert not (tmp_path / "missing").exists()
+    assert sorted(p.name for p in tmp_path.iterdir() if p.name.startswith("known_hosts")) == ["known_hosts"]
+
+
+@needs_tools
 def test_a_leading_tilde_means_home(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     line, fingerprint = _key(tmp_path, "bw", "server")

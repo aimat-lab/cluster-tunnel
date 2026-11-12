@@ -237,6 +237,7 @@ def test_pin_refuses_when_the_key_changes_while_asking(tmp_path: Path, monkeypat
     server["fingerprints"] = ["SHA256:new", "SHA256:swapped"]
     _tty(monkeypatch, False)
     r = _hostkey("--pin", "--yes")
-    assert r.exit_code == 1
+    assert r.exit_code == 14
     assert "presents SHA256:swapped, not SHA256:new; nothing was pinned." in _norm(r)
+    assert "ctun-error: host_key_mismatch" in _norm(r)
     assert server["pins"] == [] and p.read_text(encoding="utf-8") == UNPINNED
