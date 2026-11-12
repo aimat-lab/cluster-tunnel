@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import pytest
+import yaml
 from click.testing import CliRunner
 
 from cluster_tunnel import api, cmdlog, login_bridge, paths, popup, records, session, ssh
@@ -407,3 +408,47 @@ def test_ssh_diagnostics_reach_the_cli_as_they_reach_the_api(monkeypatch) -> Non
     with pytest.raises(api.LoginError) as info:
         api.login("c", verbose=1)
     assert info.value.diagnostics in _norm(r)
+
+
+# --- add and remove ------------------------------------------------------------------
+
+ADD_CASES = {
+    # cluster name, options
+    "preset": ("bw", ["--preset", "bwuni3", "--user", "ka_x"]),
+    "own host": ("mine", ["--host", "login.example.org", "--user", "me", "--otp"]),
+    "name taken": ("c", ["--host", "h2", "--user", "u"]),
+    "bad host": ("x", ["--host", "-oProxyCommand=x", "--user", "u"]),
+    "preset without host": ("x", ["--preset", "intnano", "--user", "u"]),
+}
+
+
+@pytest.mark.parametrize("case", ADD_CASES)
+def test_add(tmp_path: Path, monkeypatch, case: str) -> None:
+    name, options = ADD_CASES[case]
+    r = _cli("add", name, *options)
+    via_cli = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+    other = tmp_path / "api.yaml"
+    other.write_text(CONFIG, encoding="utf-8")
+    kwargs = {"user": options[options.index("--user") + 1]}
+    if "--preset" in options:
+        kwargs["preset"] = options[options.index("--preset") + 1]
+    if "--host" in options:
+        kwargs["host"] = options[options.index("--host") + 1]
+    if "--otp" in options:
+        kwargs["requires_otp"] = True
+    code, _, _ = _outcome(lambda: api.add_cluster(name, config_path=other, **kwargs))
+    assert r.exit_code == code, r.output
+    assert yaml.safe_load(via_cli) == yaml.safe_load(other.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("name", ["d", "nope"])
+def test_remove(tmp_path: Path, monkeypatch, name: str) -> None:
+    monkeypatch.setattr(ssh, "is_live", lambda spec: False)
+    monkeypatch.setattr(ssh, "close", lambda spec: None)
+    r = _cli("remove", name, "--yes")
+    via_cli = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+    other = tmp_path / "api.yaml"
+    other.write_text(CONFIG, encoding="utf-8")
+    code, _, _ = _outcome(lambda: api.remove_cluster(name, config_path=other))
+    assert r.exit_code == code, r.output
+    assert via_cli == other.read_text(encoding="utf-8")

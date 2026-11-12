@@ -9,11 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Presets for the clusters ctun knows.** `ctun presets` (`--json`, `api.presets()`)
+  lists bwUniCluster 3.0 (`bwuni3`), HoreKa, HAICORE, KCIST and INT-NANO: login host,
+  what a login asks for, a user-name hint, a description and the bundled budget guard
+  (`guard_scope: every-command`). Where the operators publish the server's ED25519
+  host-key fingerprint, the preset carries it with the page it is published on
+  (bwuni3, HoreKa, HAICORE); KCIST and INT-NANO publish none, so theirs is `null`.
+- **`ctun add <name>`** (`api.add_cluster()`) writes a cluster entry into the config, from
+  a preset (`--preset`) or a host of your own (`--host`), with `--user`, `--otp/--no-otp`,
+  `--no-password` and `-l/--session-limit`. The file is edited in place, comments and
+  layout kept, the previous one in `config.yaml.bak`; a missing config is created first,
+  and a preset's budget script is copied next to it unless one is there. A name the
+  config already has is refused (`api.ClusterExistsError`), as are names, hosts and users
+  that aren't plain words (a host or user starting with `-` would reach ssh as an option).
+- **`ctun remove <name>`** (`api.remove_cluster()`) takes a cluster out: it closes a live
+  tunnel, removes its pinned host key unless another cluster uses the same host, and
+  removes the entry's lines (`config.yaml.bak` kept). It shows the change and asks;
+  `--yes` doesn't.
+- **`ctun hostkey --pin --expect <fingerprint>`** pins without asking, but only if the
+  server presents exactly that fingerprint, e.g. a preset's published one. Any other key
+  exits with the new exit code 14 (`ctun-error: host_key_mismatch`) and pins nothing.
+  `api.pin_host_key()` raises the new `api.HostKeyMismatch` (a `HostKeyError`, with
+  `offered` and `expected`) for it.
+- `skill/writing-notes.md`: how an agent writes a job's `--note`, with
+  examples. It reads the user's own `writing-notes.local.md` beside it first,
+  which this repo never ships, so updating the skill keeps it.
 - **JUPITER (JSC) in the example config**, with a bundled budget script
   `budget_templates/jupiter.sh` (the standard job-hours probe).
 
 ### Changed
 
+- `ctun hostkey --pin` exits 14 (`host_key_mismatch`), not 1, when the server's key
+  changes between showing it and pinning it, as `api.pin_host_key()` reports it.
+- Removing a config's last cluster leaves `clusters: {}`, which loads; a fresh
+  `ctun config --init` file (`clusters:` with only comments) takes `ctun add` directly.
 - **The example HoreKa entry targets HoreKa 2** (`hk2-x86.scc.kit.edu` /
   `hk2-a64.scc.kit.edu`) and its partitions; legacy HoreKa is decommissioned at
   the end of 2026. The HAICORE and bwUniCluster entries note the move to the

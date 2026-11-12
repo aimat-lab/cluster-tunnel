@@ -31,6 +31,7 @@ TIMEOUT = 90
 #       known_hosts file; print its lines, a "--" line, then their fingerprints.
 #   pinned <file> <host>  the same for the keys <file> holds for <host>.
 #   pin <file> <host> <line>...  replace <file>'s keys for <host> with <line>s.
+#   unpin <file> <host>  remove <file>'s keys for <host> (no file: nothing to do).
 # A leading "~/" in <file> means $HOME, as in the config. Child commands read
 # /dev/null, not this script on stdin.
 _HELPER = r"""
@@ -59,8 +60,9 @@ pinned)
     [ -s "$d/known_hosts" ] || exit 0
     show "$d/known_hosts"
     ;;
-pin)
+pin|unpin)
     f=$(expand "$1"); h=$2; shift 2
+    [ "$op" = unpin ] && [ ! -f "$f" ] && exit 0
     mkdir -p "$(dirname "$f")" || exit 1
     if [ -f "$f" ]; then
         # ssh-keygen -R leaves the previous file as <file>.old; one that was there stays.
@@ -72,7 +74,8 @@ pin)
         [ "$rc" -eq 0 ] || exit 1
         [ -s "$f" ] && [ -n "$(tail -c 1 "$f")" ] && echo >> "$f"  # end the last line
     fi
-    printf '%s\n' "$@" >> "$f"
+    [ "$op" = pin ] && printf '%s\n' "$@" >> "$f"
+    exit 0
     ;;
 *)
     echo "unknown operation: $op" >&2
@@ -184,6 +187,11 @@ def pin(spec: ConnSpec, file: str, keys: list[HostKey]) -> None:
     if len(hosts) != 1:
         raise ValueError(f"pin the keys of one host at a time, not {sorted(hosts)}")
     _checked(spec, ["pin", file, hosts.pop(), *(key.line for key in keys)])
+
+
+def unpin(spec: ConnSpec, file: str, host: str) -> None:
+    """Remove every key ``file`` holds for ``host`` (hashed entries too); no file, nothing to do."""
+    _checked(spec, ["unpin", file, host])
 
 
 def parse(output: str) -> list[HostKey]:

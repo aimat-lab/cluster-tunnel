@@ -20,6 +20,7 @@ workflow and golden rules, see [SKILL.md](SKILL.md).
 - `upload` / `download` — transfer files over the tunnel
 - `logs` — commands sent this session
 - `logout` — close the tunnel
+- `presets` / `add` / `remove` — set clusters up (the user's call)
 - `config` — manage the config file
 - JSON output for scripting
 - Failure modes and what they mean
@@ -229,6 +230,7 @@ panel with the target and the session's budget.
 ```
 ctun -t <cluster> hostkey [-j|--json]
 ctun -t <cluster> hostkey --pin [-y|--yes]
+ctun -t <cluster> hostkey --pin --expect <SHA256:fingerprint>
 ```
 
 - Shows the host key the cluster's server presents and what a login would make
@@ -241,6 +243,10 @@ ctun -t <cluster> hostkey --pin [-y|--yes]
   asks; without a terminal it only shows it, unless `-y/--yes`.
 - **Pinning is the user's decision.** Show them the fingerprint, let them compare
   it with the one the cluster's operators publish, and let them run `--pin`.
+- `--pin --expect <fingerprint>` pins without asking, only if the server presents
+  exactly that fingerprint (a preset's published one, from `ctun presets`). Any
+  other key exits 14 (`ctun-error: host_key_mismatch`), and nothing is pinned:
+  **stop and tell the user.**
 - Exits 1 when the server presents a different key than the one logins trust
   (pinned, or known to ssh). **Stop and tell the user**; such a key can only be
   pinned from a terminal.
@@ -395,6 +401,28 @@ ctun -t <cluster> logout
 
 Tears down the master connection and clears the session record and command log.
 
+## `presets` / `add` / `remove` — set clusters up
+
+```
+ctun presets [-j|--json]
+ctun add <name> --preset <preset> --user <user> [--host H] [--otp|--no-otp] [--no-password] [-l N] [--json]
+ctun add <name> --host <login host> --user <user> [--otp] [--no-password] [--json]
+ctun remove <name> [-y|--yes] [--json]
+```
+
+- `presets` lists the clusters ctun knows (bwuni3, horeka, haicore, kcist,
+  intnano): host, login prompts, user-name hint, budget, and the operators'
+  published host-key fingerprint where there is one.
+- `add` writes a new entry into the config (creating the config if there is
+  none; previous file kept as `config.yaml.bak`), with the preset's budget guard.
+  It refuses a name the config already has. It does not pin the host key; it
+  prints the `hostkey --pin` command to run next.
+- `remove` closes the cluster's tunnel, removes its pinned key (unless another
+  cluster uses the same host) and its entry. It asks first; without a terminal
+  nothing is removed unless `--yes`.
+- **Adding or removing a cluster is the user's decision**: the entry says where
+  ctun's ssh goes. Suggest the command; run it only when the user asks you to.
+
 ## `config` — manage the config file
 
 ```
@@ -441,7 +469,7 @@ approval of the exact text.
 
 ## JSON output for scripting
 
-`status`, `info`, `logs`, `jobs` and `hostkey` accept `-j/--json` for stable machine-readable
+`status`, `info`, `logs`, `jobs`, `hostkey`, `presets`, `add` and `remove --yes` accept `-j/--json` for stable machine-readable
 output. Prefer these when you need to parse state programmatically rather than
 scraping the rendered tables/panels.
 
@@ -455,6 +483,7 @@ scraping the rendered tables/panels.
 | Interactive login `failed or timed out` | Nobody filled the popup, or auth failed. | Ask the user to retry; add `-v` for ssh diagnostics. |
 | `No display for the login dialog` | No GUI available for the popup. | Ask the user to run plain `ctun -t <cluster> login` in a terminal. |
 | `hostkey`: `DIFFERENT from the pinned key`, or login: `Host key verification failed` | The server presents another key than the pinned one: re-keyed, or someone in between. | Stop. Tell the user; only they re-pin, after checking the published fingerprint. |
+| `hostkey --pin --expect`: exit 14, `host_key_mismatch` | The server presents another key than the published fingerprint. | Stop. Tell the user; don't pin it some other way. |
 | `WSL is not installed` / `WSL distro '…' lacks …` | Windows only: WSL can't carry the tunnel yet. | Show the user the message; they fix WSL. Don't work around it. |
 | `note`: `… single-string description, which can't take notes` | The config predates note lists. | Tell the user; `ctun config --migrate` converts it, and that's their call. |
 
