@@ -16,6 +16,8 @@ agent:
     You operate on shared academic HPC clusters via `ctun`. Respect the stated
     restrictions and read `ctun -t <cluster> info` before submitting jobs.
 
+# Quickest: `ctun add <name> --preset <preset> --user <you>` writes an entry here
+# (`ctun presets` lists the known clusters). Or uncomment an example below.
 clusters:
 
   # HOREKA @ KIT
