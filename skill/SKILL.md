@@ -167,8 +167,10 @@ Tips:
 - Every submission gets a job record on the cluster. Give `--project` to group
   it. Put only facts from this session into `--note`, mark references as
   `commit:<hash>` / `job:<id>`, and leave the note out when unsure; the human
-  reviews it. Details in [reference.md](reference.md#job-records). A job note
-  belongs to one job; it is not a cluster note (`ctun note`).
+  reviews it. Before writing one, read [writing-notes.md](writing-notes.md),
+  which also points to the user's own note directions. Details in
+  [reference.md](reference.md#job-records). A job note belongs to one job; it
+  is not a cluster note (`ctun note`).
 - After submitting a job, don't poll `squeue` by hand — set up a live monitor
   that wakes you on state changes and failures: see
   [monitoring-jobs.md](monitoring-jobs.md).

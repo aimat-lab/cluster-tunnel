@@ -31,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exits with the new exit code 14 (`ctun-error: host_key_mismatch`) and pins nothing.
   `api.pin_host_key()` raises the new `api.HostKeyMismatch` (a `HostKeyError`, with
   `offered` and `expected`) for it.
+- `skill/writing-notes.md`: how an agent writes a job's `--note`, with
+  examples. It reads the user's own `writing-notes.local.md` beside it first,
+  which this repo never ships, so updating the skill keeps it.
 
 ### Changed
 
